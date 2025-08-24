@@ -1,0 +1,67 @@
+flowchart TD
+  %% 输入与预处理
+  A1[Start: Receive Message
+(输入: 聊天记录 {talk_data} / 最新消息 {latest_wechat_message})]
+  NORM[Normalizer
+(解析历史消息 -> normalized_chat, detected_vague_terms, detected_emotion, qa_candidate)]
+  QA[QA Handler (Interceptor)
+(命中常见QA -> 立即回复)]
+  SELF[SelfIntro (one-shot)
+发送句[43] & 句[44] + 模板句[45]-句[52]
+设置 introduction_sent=true]
+  FE[FieldExtractor
+(抽取基础字段: brand/product/total_budget/ single_budget_requirement/placement_type/content_direction/account_type)]
+  MAP[Mapper/Validator
+(映射 content_direction/account_type -> {user_classes}; 校验格式)]
+  MAPFAIL[Unmappable Handler
+(生成友好提示 -> 等待用户修正; 加入 asked_once_fields)]
+  DECIDE[Decision: Precise Matching?
+(询问是否开启精准匹配；句[57]-句[60])]
+  ADD[AdditionalCollector
+(收集6类追加条件; 严格逐行格式: 句[61]-句[97])]
+  CLAR[Clarifier
+(对模糊词汇发起澄清; 每问题只问一次; 句[99]-句[102])]
+  TIMEOUT[Timeout / Backoff
+(用户不回复 -> 一次提醒/跳过非关键字段/人工介入)]
+  FINAL[Finalizer (one-shot)
+发送确认引导语: “已确认 {需求信息}，我将开始选号，请耐心等待...” (句[104])]
+  END[End / Handover]
+
+  %% 控制流
+  A1 --> NORM
+  NORM -->|qa_candidate? yes| QA
+  QA -->|answered| NORM
+  NORM -->|qa_candidate? no| SELF
+  SELF --> FE
+  FE --> MAP
+  MAP -->|mapped ok| DECIDE
+  MAP -->|mapping fail| MAPFAIL
+  MAPFAIL -->|user fixes| FE
+  MAPFAIL -->|no reply -> timeout| TIMEOUT
+
+  DECIDE -->|need precise| ADD
+  DECIDE -->|no precise| FINAL
+
+  ADD --> CLAR
+  CLAR -->|answered| FE
+  CLAR -->|no definition| FE
+  CLAR -->|no reply -> timeout| TIMEOUT
+
+  TIMEOUT --> FINAL
+  FINAL --> END
+
+  %% 情绪策略（影响所有用户消息）
+  subgraph EMO["Emotion Strategy (persona)"]
+    style EMO fill:#fff0b3,stroke:#333,stroke-dasharray: 5 5
+    EMO_NOTE((检测 {情绪} -> 先安抚/共鸣))
+  end
+  EMO_NOTE -.-> SELF
+  EMO_NOTE -.-> FE
+  EMO_NOTE -.-> CLAR
+  EMO_NOTE -.-> FINAL
+
+  %% 注释节点
+  classDef oneShot fill:#dff0d8,stroke:#2e7d32,stroke-width:1px;
+  classDef interceptor fill:#f9d6d5,stroke:#c62828,stroke-width:1px;
+  class SELF,FINAL oneShot;
+  class QA interceptor;
