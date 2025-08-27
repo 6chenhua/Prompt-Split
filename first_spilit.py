@@ -851,7 +851,7 @@ def gen_mermaid_content(text) -> list:
     pattern = r"```mermaid(.*?)```"
 
     # 使用 re.findall 查找所有匹配项
-    matches = re.findall(pattern, text, re.DOTALL)
+    matches = re.findall(pattern, res, re.DOTALL)
 
     # 移除每个匹配项开头和结尾的空白字符
     extracted_content = [content.strip() for content in matches]
@@ -860,60 +860,60 @@ def gen_mermaid_content(text) -> list:
 
 
 if __name__ == '__main__':
-#     mermaid = gen_mermaid_content(user_input)
-#     print(mermaid)
-#
-#     mermaid = """
-# flowchart TD
-#   %% 输入与预处理
-#   IN[步骤1: 入口/预处理
-#   (加载 {{demo}}, {{output}}, {{password}}, {{passwordstart}}, {{topic}}, {{articlecount}}, {{requirements}}, {{index}})]
-#   STYLE[步骤2: 样稿风格提炼
-#   (仅用样稿风格, 不复制内容)]
-#   DIR[步骤3: 内容方向提取与开头策略
-#   (从 {产品卖点} 提取 {内容方向}, 随机选一作开头)]
-#   BENEFIT[步骤4: 利益点提炼与多样化润色
-#   (提取 {核心利益点}/{补充利益点}, 避免重复表述)]
-#   COMPOSE[步骤5: 标题与正文草稿生成
-#   (标题≤20, 正文字数∈{{articlecount}}, 加入{观点}/{案例}/{细节})]
-#   LAYOUT[步骤6: 排版与 Emoji 强化
-#   (短句化, 段首/关键信息点加 emoji, 列表用箭头/圆点)]
-#   PNUM[步骤7: 口令数字计算 (one-shot)
-#   ({{passwordstart}} + {{index}})]
-#   PIN[步骤8: 口令插入与位置校验
-#   (若空->仅{{password}}; 否则插入数字; 非文首/文末)]
-#   TOPIC[步骤9: 话题输出与校验
-#   (严格输出 {{topic}})]
-#   QA[步骤11: QA 优先拦截 (拦截无关话题)]
-#   VALID[步骤10: 规则合规模块
-#   (禁词/品牌/时间/标点/分散核心点/字数/风格)]
-#   REGEN[步骤12: 再生成/微调循环
-#   (定向修复合规问题, 次数<=2)]
-#   FINAL[步骤13: 最终输出
-#   (合成标题+正文+话题, 口令在正文中段)]
-#
-#   %% 控制流
-#   IN --> STYLE --> DIR --> BENEFIT --> COMPOSE --> LAYOUT --> PNUM --> PIN --> TOPIC --> VALID
-#   VALID -- 合规通过 --> FINAL
-#   VALID -- 不合规 --> REGEN --> COMPOSE
-#   %% QA 拦截可在任意时刻介入
-#   IN -.-> QA
-#   STYLE -.-> QA
-#   DIR -.-> QA
-#   BENEFIT -.-> QA
-#   COMPOSE -.-> QA
-#   LAYOUT -.-> QA
-#   PNUM -.-> QA
-#   PIN -.-> QA
-#   TOPIC -.-> QA
-#   VALID -.-> QA
-#   QA -- 拒答并引导回创作 --> COMPOSE
-# """
-#     split_messages.append({"role": "user", "content": mermaid})
-#     split_result = llm_client.call(split_messages, 'gpt-5-mini')
-#     subsystems = llm_client.extract_json_string(split_result)
-#     print('='*100)
-#     print(subsystems)
+    mermaid = gen_mermaid_content(user_input)
+    print(mermaid)
+
+    mermaid = """
+flowchart TD
+  %% 输入与预处理
+  IN[步骤1: 入口/预处理
+  (加载 {{demo}}, {{output}}, {{password}}, {{passwordstart}}, {{topic}}, {{articlecount}}, {{requirements}}, {{index}})]
+  STYLE[步骤2: 样稿风格提炼
+  (仅用样稿风格, 不复制内容)]
+  DIR[步骤3: 内容方向提取与开头策略
+  (从 {产品卖点} 提取 {内容方向}, 随机选一作开头)]
+  BENEFIT[步骤4: 利益点提炼与多样化润色
+  (提取 {核心利益点}/{补充利益点}, 避免重复表述)]
+  COMPOSE[步骤5: 标题与正文草稿生成
+  (标题≤20, 正文字数∈{{articlecount}}, 加入{观点}/{案例}/{细节})]
+  LAYOUT[步骤6: 排版与 Emoji 强化
+  (短句化, 段首/关键信息点加 emoji, 列表用箭头/圆点)]
+  PNUM[步骤7: 口令数字计算 (one-shot)
+  ({{passwordstart}} + {{index}})]
+  PIN[步骤8: 口令插入与位置校验
+  (若空->仅{{password}}; 否则插入数字; 非文首/文末)]
+  TOPIC[步骤9: 话题输出与校验
+  (严格输出 {{topic}})]
+  QA[步骤11: QA 优先拦截 (拦截无关话题)]
+  VALID[步骤10: 规则合规模块
+  (禁词/品牌/时间/标点/分散核心点/字数/风格)]
+  REGEN[步骤12: 再生成/微调循环
+  (定向修复合规问题, 次数<=2)]
+  FINAL[步骤13: 最终输出
+  (合成标题+正文+话题, 口令在正文中段)]
+
+  %% 控制流
+  IN --> STYLE --> DIR --> BENEFIT --> COMPOSE --> LAYOUT --> PNUM --> PIN --> TOPIC --> VALID
+  VALID -- 合规通过 --> FINAL
+  VALID -- 不合规 --> REGEN --> COMPOSE
+  %% QA 拦截可在任意时刻介入
+  IN -.-> QA
+  STYLE -.-> QA
+  DIR -.-> QA
+  BENEFIT -.-> QA
+  COMPOSE -.-> QA
+  LAYOUT -.-> QA
+  PNUM -.-> QA
+  PIN -.-> QA
+  TOPIC -.-> QA
+  VALID -.-> QA
+  QA -- 拒答并引导回创作 --> COMPOSE
+"""
+    split_messages.append({"role": "user", "content": mermaid})
+    split_result = llm_client.call(split_messages, 'gpt-5-mini')
+    subsystems = llm_client.extract_json_string(split_result)
+    print('='*100)
+    print(subsystems)
     subsystems = '''
 {
     "subsystems": [

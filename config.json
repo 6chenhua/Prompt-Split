@@ -1,0 +1,87 @@
+{
+  "chunk_size": 500,
+  "max_workers": 5,
+  "api_timeout": 30,
+  "encoding": "utf-8",
+  "output_dir": "output",
+  "comment": "PromptSplit 系统配置文件",
+  "version": "2.0-refactored",
+  "processing": {
+    "chunk_size": 500,
+    "max_workers": 5,
+    "encoding": "utf-8"
+  },
+  "api": {
+    "url": "https://api.rcouyi.com",
+    "key": "sk-rJeYV6eGEYtqaEmpB2B4331bCdAa4474971d7a6236D4Fe07",
+    "default_model": "gpt-5-mini",
+    "timeout": 30,
+    "max_retries": 3,
+    "model": "gpt-3.5-turbo"
+  },
+  "retry": {
+    "max_retries": 3,
+    "base_delay": 1.0,
+    "max_delay": 30.0,
+    "exponential_base": 2,
+    "jitter_factor": 0.25,
+    "retry_on_network_error": true,
+    "retry_on_server_error": true,
+    "retry_on_rate_limit": true,
+    "retry_on_timeout": true,
+    "non_retryable_errors": [
+      "auth",
+      "invalid_request",
+      "quota_exceeded"
+    ]
+  },
+  "files": {
+    "input_dir": ".",
+    "output_dir": "output",
+    "default_input": "nl_prompt.txt",
+    "extract_prompt": "extract_var_v6.txt",
+    "postprocess_prompt": "post_process_variable_v2.txt"
+  },
+  "logging": {
+    "level": "INFO",
+    "show_timestamps": true,
+    "log_to_file": false,
+    "log_file": "promptsplit.log"
+  },
+  "performance": {
+    "enable_caching": true,
+    "cache_dir": ".cache",
+    "parallel_processing": true,
+    "memory_limit_mb": 1024
+  },
+  "features": {
+    "save_intermediate": true,
+    "generate_reports": true,
+    "validate_inputs": true,
+    "auto_cleanup": false
+  },
+  "step1_extract": {
+    "chunk_size": 500,
+    "max_workers": 5,
+    "enable_postprocess": true,
+    "variable_threshold": 3
+  },
+  "step2_split": {
+    "mermaid_enabled": true,
+    "subsystem_min_size": 2,
+    "max_subsystems": 10,
+    "generate_diagrams": true
+  },
+  "step3_cnlp": {
+    "batch_size": 5,
+    "strict_mode": false,
+    "validate_output": true,
+    "format_version": "1.0"
+  },
+  "validation": {
+    "min_text_length": 10,
+    "max_text_length": 100000,
+    "check_file_exists": true,
+    "validate_json": true
+  }
+}

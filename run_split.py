@@ -3,8 +3,11 @@ import os
 import re
 from typing import Dict, Any
 
+# 导入公共工具
+from common_utils import FileUtils, TextProcessor, LogUtils, ConfigUtils
+
 # 导入现有的功能模块
-from extract_variable import process_chunks_concurrently, split_text_by_length, post_process
+from extract_variable import process_chunks_concurrently, post_process
 from nl2cnlp import batch_transform_cnlp
 
 # 导入first_split.py中的相关组件
@@ -22,63 +25,83 @@ from first_spilit import (
 class PromptSplitPipeline:
     """
     提示词拆分流程编排器
-    直接调用现有函数，专注于流程控制
+    重构后版本：使用公共工具，移除重复代码
     """
     
-    def __init__(self):
-        pass
+    def __init__(self, progress_callback=None):
+        """
+        初始化流水线
+        
+        Args:
+            progress_callback: 进度回调函数，格式为 callback(step_name, progress, message)
+        """
+        self.config = ConfigUtils.get_config()
+        self.progress_callback = progress_callback
+        LogUtils.log_info("PromptSplit 流水线初始化完成")
+    
+    def _notify_progress(self, step_name: str, progress: int, message: str = "", result_data: Any = None):
+        """通知进度更新"""
+        if self.progress_callback:
+            try:
+                self.progress_callback(step_name, progress, message, result_data)
+            except Exception as e:
+                LogUtils.log_warning(f"进度回调执行失败: {e}")
     
     def read_file(self, file_path: str) -> str:
-        """读取文件内容"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        except FileNotFoundError:
-            print(f"❌ 文件 {file_path} 不存在")
-            return ""
-        except Exception as e:
-            print(f"❌ 读取文件 {file_path} 时出错: {e}")
-            return ""
+        """读取文件内容（使用公共工具）"""
+        return FileUtils.read_file(file_path)
     
-    def save_file(self, file_path: str, content: str):
-        """保存文件内容"""
-        try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            print(f"✅ 已保存到 {file_path}")
-        except Exception as e:
-            print(f"❌ 保存文件 {file_path} 时出错: {e}")
+    def save_file(self, file_path: str, content: str) -> bool:
+        """保存文件内容（使用公共工具）"""
+        return FileUtils.save_file(file_path, content)
     
-    def save_json(self, file_path: str, data: Dict):
-        """保存JSON数据"""
-        try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"✅ 已保存JSON到 {file_path}")
-        except Exception as e:
-            print(f"❌ 保存JSON文件 {file_path} 时出错: {e}")
+    def save_json(self, file_path: str, data: Dict) -> bool:
+        """保存JSON数据（使用公共工具）"""
+        return FileUtils.save_json(file_path, data)
     
     def step1_extract_variables(self, original_text: str) -> Dict[str, Any]:
         """
-        第一步：提取变量
-        调用 extract_variable.py 中的现有函数
+        第一步：提取变量（使用公共工具重构）
         """
-        print("=" * 50)
-        print("🔍 第一步：开始提取变量...")
+        LogUtils.log_step("第一步：提取变量", "开始提取变量流程")
+        self._notify_progress("输入验证", 0, "验证输入文本...")
         
-        if not original_text:
+        if not original_text or not original_text.strip():
+            LogUtils.log_error("输入文本为空")
             return {"error": "输入文本为空"}
         
+        self._notify_progress("输入验证", 100, f"输入文本长度: {len(original_text)} 字符")
+        
         try:
-            # 使用现有的文本分割函数
-            chunks = split_text_by_length(original_text)
-            print(f"📄 文本已切割为 {len(chunks)} 个块")
+            # 使用公共文本处理器分割文本
+            self._notify_progress("文本分块", 0, "开始分割文本...")
+            chunk_size = self.config.get('chunk_size', 500)
+            chunks = TextProcessor.split_text_by_length(original_text, chunk_size)
+            LogUtils.log_info(f"文本已切割为 {len(chunks)} 个块，块大小: {chunk_size}")
+            
+            # 立即传递文本分块结果
+            chunk_result = {
+                "chunk_count": len(chunks),
+                "chunk_size": chunk_size,
+                "total_chars": len(original_text),
+                "chunks": chunks  # 传递所有分块，让UI分页显示
+            }
+            self._notify_progress("文本分块", 100, f"分割为 {len(chunks)} 个文本块", chunk_result)
             
             # 使用现有的并发处理函数提取变量
+            self._notify_progress("提取变量", 0, "调用LLM提取变量...")
             variables = process_chunks_concurrently(chunks)
-            print(f"🎯 提取到 {len(variables)} 个变量: {variables}")
+            LogUtils.log_success(f"提取到 {len(variables)} 个变量")
+            
+            # 立即传递变量提取结果
+            variable_result = {
+                "variables": variables,
+                "total_count": len(variables)
+            }
+            self._notify_progress("提取变量", 100, f"提取到 {len(variables)} 个变量", variable_result)
             
             # 将变量标记到原文中
+            self._notify_progress("后处理变量", 0, "开始变量后处理...")
             text_with_vars = original_text
             for var in variables:
                 text_with_vars = text_with_vars.replace(var, "{" + var + "}")
@@ -86,24 +109,38 @@ class PromptSplitPipeline:
             # 使用现有的后处理函数
             try:
                 processed_text = post_process(text_with_vars)
-                print("✨ 变量后处理完成")
+                LogUtils.log_success("变量后处理完成")
             except Exception as e:
-                print(f"⚠️ 后处理失败，使用原始标记文本: {e}")
+                LogUtils.log_warning(f"后处理失败，使用原始标记文本: {e}")
                 processed_text = text_with_vars
+            
+            # 使用公共文本处理器清理文本
+            processed_text = TextProcessor.clean_text(processed_text)
+            
+            # 立即传递后处理结果
+            processing_result = {
+                "processed_text": processed_text,
+                "changes": [f"将 {len(variables)} 个变量标记为 {{变量名}} 格式"]
+            }
+            self._notify_progress("后处理变量", 100, "变量后处理完成", processing_result)
             
             result = {
                 "variables": variables,
                 "original_text": original_text,
                 "text_with_vars": processed_text,
-                "chunks_count": len(chunks)
+                "chunks_count": len(chunks),
+                "stats": {
+                    "chunk_size_used": chunk_size,
+                    "total_variables": len(variables)
+                }
             }
             
-            print(f"✅ 第一步完成，提取到 {len(variables)} 个变量")
+            LogUtils.log_success(f"第一步完成，提取到 {len(variables)} 个变量")
             return result
             
         except Exception as e:
             error_msg = f"变量提取失败: {e}"
-            print(f"❌ {error_msg}")
+            LogUtils.log_error(error_msg)
             return {"error": error_msg}
     
     def generate_mermaid_content(self, text: str) -> str:
@@ -145,18 +182,218 @@ class PromptSplitPipeline:
             # 调用LLM拆分子系统
             response = llm_client.call(messages, "gpt-5-mini")
             
-            # 提取JSON格式的子系统信息
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                subsystems_data = json.loads(json_match.group(0))
+            # 改进的JSON提取逻辑
+            subsystems_data = self._extract_subsystems_json(response)
+            if subsystems_data and "subsystems" in subsystems_data:
                 return subsystems_data
             else:
-                print("⚠️ 未找到JSON格式的子系统信息")
+                LogUtils.log_warning("未找到有效的子系统JSON数据")
                 return {"subsystems": []}
-                
+            
         except Exception as e:
-            print(f"❌ 子系统拆分失败: {e}")
+            LogUtils.log_error(f"子系统拆分失败: {e}")
             return {"subsystems": []}
+
+    def _extract_subsystems_json(self, response: str) -> Dict[str, Any]:
+        """
+        改进的JSON提取方法，专门用于提取子系统数据
+        
+        Args:
+            response: LLM的原始响应
+            
+        Returns:
+            提取到的子系统数据字典
+        """
+        if not response:
+            LogUtils.log_warning("LLM响应为空")
+            return {}
+        
+        LogUtils.log_info("开始提取子系统JSON数据...")
+        LogUtils.log_info(f"原始响应长度: {len(response)} 字符")
+        LogUtils.log_info(f"响应预览: {response[:200]}...")
+        
+        # 尝试多种JSON提取策略
+        strategies = [
+            self._extract_json_strategy_1,  # 完整JSON块提取
+            self._extract_json_strategy_2,  # 代码块提取
+            self._extract_json_strategy_3,  # 逐行搜索
+            self._extract_json_strategy_4   # 公共工具提取
+        ]
+        
+        for i, strategy in enumerate(strategies, 1):
+            try:
+                LogUtils.log_info(f"尝试策略 {i}")
+                result = strategy(response)
+                if result and "subsystems" in result:
+                    LogUtils.log_success(f"策略 {i} 成功提取JSON数据")
+                    return result
+                else:
+                    LogUtils.log_warning(f"策略 {i} 未找到有效数据")
+            except Exception as e:
+                LogUtils.log_warning(f"策略 {i} 失败: {e}")
+        
+        LogUtils.log_error("所有JSON提取策略均失败")
+        return {}
+
+    def _extract_json_strategy_1(self, response: str) -> Dict[str, Any]:
+        """策略1: 查找完整的JSON块（从第一个{到匹配的}）"""
+        start_idx = response.find('{')
+        if start_idx == -1:
+            return {}
+        
+        brace_count = 0
+        for i, char in enumerate(response[start_idx:], start_idx):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    json_str = response[start_idx:i+1]
+                    return json.loads(json_str)
+        
+        return {}
+
+    def _extract_json_strategy_2(self, response: str) -> Dict[str, Any]:
+        """策略2: 提取```json代码块中的JSON"""
+        import re
+        
+        # 查找 ```json 代码块
+        json_block_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
+        match = re.search(json_block_pattern, response, re.DOTALL | re.IGNORECASE)
+        if match:
+            return json.loads(match.group(1))
+        
+        return {}
+
+    def _extract_json_strategy_3(self, response: str) -> Dict[str, Any]:
+        """策略3: 逐行搜索，查找以{开头的行"""
+        lines = response.split('\n')
+        json_lines = []
+        in_json = False
+        brace_count = 0
+        
+        for line in lines:
+            stripped = line.strip()
+            if not in_json and stripped.startswith('{'):
+                in_json = True
+                json_lines = [line]
+                brace_count = line.count('{') - line.count('}')
+            elif in_json:
+                json_lines.append(line)
+                brace_count += line.count('{') - line.count('}')
+                if brace_count <= 0:
+                    break
+        
+        if json_lines:
+            json_str = '\n'.join(json_lines)
+            return json.loads(json_str)
+        
+        return {}
+
+    def _extract_json_strategy_4(self, response: str) -> Dict[str, Any]:
+        """策略4: 使用公共工具的JSON提取"""
+        from common_utils import JSONProcessor
+        
+        json_str = JSONProcessor.extract_json_string(response)
+        if json_str and json_str != response:  # 确保提取到了JSON
+            return json.loads(json_str)
+        
+        return {}
+
+    def _extract_subprompts_json(self, response: str) -> Dict[str, Any]:
+        """
+        提取子提示词JSON数据（复用子系统提取逻辑）
+        
+        Args:
+            response: LLM的原始响应
+            
+        Returns:
+            提取到的子提示词数据字典
+        """
+        if not response:
+            LogUtils.log_warning("LLM响应为空")
+            return {}
+        
+        LogUtils.log_info("开始提取子提示词JSON数据...")
+        LogUtils.log_info(f"原始响应长度: {len(response)} 字符")
+        
+        # 复用子系统的提取策略，但检查不同的字段
+        strategies = [
+            self._extract_json_strategy_1,
+            self._extract_json_strategy_2,
+            self._extract_json_strategy_3,
+            self._extract_json_strategy_4
+        ]
+        
+        for i, strategy in enumerate(strategies, 1):
+            try:
+                result = strategy(response)
+                # 检查是否包含子提示词相关字段
+                if result and ("subprompts" in result or "sub_prompts" in result):
+                    LogUtils.log_success(f"策略 {i} 成功提取子提示词JSON数据")
+                    # 统一字段名
+                    if "sub_prompts" in result and "subprompts" not in result:
+                        result["subprompts"] = result.pop("sub_prompts")
+                    return result
+                elif result:
+                    LogUtils.log_warning(f"策略 {i} 提取到JSON但无子提示词字段")
+            except Exception as e:
+                LogUtils.log_warning(f"策略 {i} 失败: {e}")
+        
+        LogUtils.log_error("所有子提示词JSON提取策略均失败")
+        return {}
+
+    def _extract_subprompts_from_data(self, data: Any) -> list:
+        """
+        智能提取子提示词数据，处理各种可能的数据格式
+        
+        Args:
+            data: 可能的数据格式（字典、列表或其他）
+            
+        Returns:
+            子提示词列表
+        """
+        LogUtils.log_info("开始智能提取子提示词数据...")
+        
+        # 情况1: 数据为空或None
+        if not data:
+            LogUtils.log_warning("数据为空")
+            return []
+        
+        # 情况2: 数据已经是列表
+        if isinstance(data, list):
+            LogUtils.log_info(f"数据已经是列表，包含 {len(data)} 项")
+            return data
+        
+        # 情况3: 数据是字典
+        if isinstance(data, dict):
+            # 尝试多种可能的字段名
+            possible_keys = ["subprompts", "sub_prompts", "prompts", "subPrompts"]
+            
+            for key in possible_keys:
+                if key in data:
+                    value = data[key]
+                    LogUtils.log_info(f"找到字段 '{key}'，数据类型: {type(value)}")
+                    
+                    # 如果值是列表，直接返回
+                    if isinstance(value, list):
+                        LogUtils.log_success(f"成功提取 {len(value)} 个子提示词（字段: {key}）")
+                        return value
+                    
+                    # 如果值是字典，尝试进一步提取
+                    elif isinstance(value, dict):
+                        LogUtils.log_info(f"字段 '{key}' 是字典，尝试进一步提取...")
+                        return self._extract_subprompts_from_data(value)
+            
+            # 如果没有找到明确的字段，检查是否直接包含子提示词属性
+            if all(key in data for key in ["name", "prompt"]):
+                LogUtils.log_info("检测到单个子提示词对象")
+                return [data]
+        
+        # 情况4: 其他数据类型
+        LogUtils.log_warning(f"无法处理的数据类型: {type(data)}")
+        LogUtils.log_warning(f"数据内容: {str(data)[:500]}")
+        return []
     
     def generate_subprompts(self, original_text: str, subsystems_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -173,17 +410,16 @@ class PromptSplitPipeline:
             # 调用LLM生成子提示词
             response = llm_client.call(messages, "gpt-5-mini")
             
-            # 提取JSON格式的子提示词信息
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                subprompts_data = json.loads(json_match.group(0))
+            # 改进的JSON提取逻辑（复用子系统的提取方法）
+            subprompts_data = self._extract_subprompts_json(response)
+            if subprompts_data and "subprompts" in subprompts_data:
                 return subprompts_data
             else:
-                print("⚠️ 未找到JSON格式的子提示词信息")
+                LogUtils.log_warning("未找到有效的子提示词JSON数据")
                 return {"subprompts": []}
                 
         except Exception as e:
-            print(f"❌ 子提示词生成失败: {e}")
+            LogUtils.log_error(f"子提示词生成失败: {e}")
             return {"subprompts": []}
     
     def step2_split_to_subprompts(self, text_with_vars: str) -> Dict[str, Any]:
@@ -191,33 +427,43 @@ class PromptSplitPipeline:
         第二步：拆分为子提示词
         按照first_split.py的完整逻辑：mermaid生成 → 子系统拆分 → 子提示词生成
         """
-        print("=" * 50)
-        print("🔀 第二步：拆分为子提示词...")
-        print("📊 按照完整流程：Mermaid生成 → 子系统拆分 → 子提示词生成")
+        LogUtils.log_step("第二步：拆分为子提示词", "按照完整流程：Mermaid生成 → 子系统拆分 → 子提示词生成")
         
         try:
             # 2.1 生成Mermaid流程图
-            print("\n🎨 步骤2.1：生成Mermaid流程图...")
+            self._notify_progress("生成Mermaid图", 0, "开始生成Mermaid流程图...")
+            LogUtils.log_info("🎨 步骤2.1：生成Mermaid流程图...")
             mermaid_content = self.generate_mermaid_content(text_with_vars)
             if not mermaid_content:
+                LogUtils.log_error("Mermaid图生成失败")
                 return {"error": "Mermaid图生成失败"}
-            print("✅ Mermaid图生成完成")
+            LogUtils.log_success("Mermaid图生成完成")
+            # 立即传递Mermaid结果
+            self._notify_progress("生成Mermaid图", 100, "Mermaid流程图生成完成", mermaid_content)
             
             # 2.2 拆分为子系统
-            print("\n🔧 步骤2.2：拆分为子系统...")
+            self._notify_progress("拆分子系统", 0, "开始拆分子系统...")
+            LogUtils.log_info("🔧 步骤2.2：拆分为子系统...")
             subsystems_data = self.split_to_subsystems(mermaid_content)
             subsystems_count = len(subsystems_data.get("subsystems", []))
             if subsystems_count == 0:
+                LogUtils.log_error("子系统拆分失败")
                 return {"error": "子系统拆分失败"}
-            print(f"✅ 拆分出 {subsystems_count} 个子系统")
+            LogUtils.log_success(f"拆分出 {subsystems_count} 个子系统")
+            # 立即传递子系统结果
+            self._notify_progress("拆分子系统", 100, f"拆分出 {subsystems_count} 个子系统", subsystems_data)
             
             # 2.3 生成子提示词
-            print("\n📝 步骤2.3：生成子系统对应的提示词...")
+            self._notify_progress("生成子提示词", 0, "开始生成子系统对应的提示词...")
+            LogUtils.log_info("📝 步骤2.3：生成子系统对应的提示词...")
             subprompts_data = self.generate_subprompts(text_with_vars, subsystems_data)
             subprompts_count = len(subprompts_data.get("subprompts", []))
             if subprompts_count == 0:
+                LogUtils.log_error("子提示词生成失败")
                 return {"error": "子提示词生成失败"}
-            print(f"✅ 生成了 {subprompts_count} 个子提示词")
+            LogUtils.log_success(f"生成了 {subprompts_count} 个子提示词")
+            # 立即传递子提示词结果
+            self._notify_progress("生成子提示词", 100, f"生成了 {subprompts_count} 个子提示词", subprompts_data)
             
             # 整合结果
             result = {
@@ -232,16 +478,16 @@ class PromptSplitPipeline:
                 }
             }
             
-            print(f"✅ 第二步完成")
-            print(f"   - Mermaid图: 已生成")
-            print(f"   - 子系统数量: {subsystems_count}")
-            print(f"   - 子提示词数量: {subprompts_count}")
+            LogUtils.log_success("第二步完成")
+            LogUtils.log_info(f"   - Mermaid图: 已生成")
+            LogUtils.log_info(f"   - 子系统数量: {subsystems_count}")
+            LogUtils.log_info(f"   - 子提示词数量: {subprompts_count}")
             
             return result
             
         except Exception as e:
             error_msg = f"拆分流程失败: {e}"
-            print(f"❌ {error_msg}")
+            LogUtils.log_error(error_msg)
             return {"error": error_msg}
     
     def step3_convert_to_cnlp(self, subprompts_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -249,15 +495,22 @@ class PromptSplitPipeline:
         第三步：转换为CNLP格式
         调用 nl2cnlp.py 中的现有函数
         """
-        print("=" * 50)
-        print("🔄 第三步：转换为CNLP格式...")
+        LogUtils.log_step("第三步：转换为CNLP格式", "开始CNLP格式转换流程")
+        self._notify_progress("转换CNLP", 0, "开始转换为CNLP格式...")
         
         try:
-            subprompts = subprompts_data.get("subprompts", {}).get("subprompts", [])
+            # 添加数据类型验证和智能获取
+            LogUtils.log_info(f"接收到的数据类型: {type(subprompts_data)}")
+            LogUtils.log_info(f"数据内容预览: {str(subprompts_data)[:200]}")
+            
+            # 智能提取子提示词数据
+            subprompts = self._extract_subprompts_from_data(subprompts_data)
+            
             if not subprompts:
+                LogUtils.log_error("没有子提示词可转换")
                 return {"error": "没有子提示词可转换"}
             
-            print(f"🎯 开始转换 {len(subprompts)} 个子提示词...")
+            LogUtils.log_info(f"开始转换 {len(subprompts)} 个子提示词...")
             
             # 使用现有的批量转换函数
             cnlp_results = batch_transform_cnlp(subprompts)
@@ -275,7 +528,7 @@ class PromptSplitPipeline:
                     })
                 else:
                     failed_count += 1
-                    print(f"⚠️ 子提示词 {i+1} 转换失败")
+                    LogUtils.log_warning(f"子提示词 {i+1} 转换失败")
             
             result = {
                 "cnlp_results": successful_results,
@@ -285,12 +538,14 @@ class PromptSplitPipeline:
                 "original_subprompts": subprompts_data
             }
             
-            print(f"✅ 第三步完成，成功转换 {len(successful_results)}/{len(subprompts)} 个子提示词")
+            LogUtils.log_success(f"第三步完成，成功转换 {len(successful_results)}/{len(subprompts)} 个子提示词")
+            # 立即传递CNLP转换结果
+            self._notify_progress("转换CNLP", 100, f"成功转换 {len(successful_results)}/{len(subprompts)} 个子提示词", result)
             return result
             
         except Exception as e:
             error_msg = f"CNLP转换失败: {e}"
-            print(f"❌ {error_msg}")
+            LogUtils.log_error(error_msg)
             return {"error": error_msg}
     
     def run_complete_pipeline(self, 
@@ -299,16 +554,16 @@ class PromptSplitPipeline:
         """
         运行完整的拆分流程
         """
-        print("🚀 开始运行完整的提示词拆分流程...")
-        print(f"📝 输入文件: {input_file}")
-        print("=" * 60)
+        LogUtils.log_step("完整流程", f"开始运行完整的提示词拆分流程，输入文件: {input_file}")
         
         # 读取原始提示词
         original_text = self.read_file(input_file)
         if not original_text:
-            return {"error": f"无法读取输入文件 {input_file}"}
+            error_msg = f"无法读取输入文件 {input_file}"
+            LogUtils.log_error(error_msg)
+            return {"error": error_msg}
         
-        print(f"📊 原始文本长度: {len(original_text)} 字符")
+        LogUtils.log_info(f"原始文本长度: {len(original_text)} 字符")
         
         # 第一步：提取变量
         step1_result = self.step1_extract_variables(original_text)
@@ -356,45 +611,49 @@ class PromptSplitPipeline:
         if save_intermediate:
             self.save_json('output_final_result.json', final_result)
         
-        print("=" * 60)
-        print("🎉 完整流程执行完成！")
-        print(f"📈 统计结果:")
-        print(f"   - 提取变量数量: {final_result['summary']['variables_count']}")
-        print(f"   - 子系统数量: {final_result['summary']['subsystems_count']}")
-        print(f"   - 子提示词数量: {final_result['summary']['subprompts_count']}")
-        print(f"   - CNLP转换成功: {final_result['summary']['cnlp_success_count']}")
-        print(f"   - CNLP转换失败: {final_result['summary']['cnlp_failed_count']}")
-        print("\n📁 输出文件:")
-        print("   - output_step1_variables.json: 变量提取结果")
-        print("   - output_step1_text_with_vars.txt: 标记变量的文本")
-        print("   - output_step2_split.json: 完整拆分结果")
-        print("   - output_step2_mermaid.txt: Mermaid流程图")
-        print("   - output_step3_cnlp.json: CNLP转换结果")
-        print("   - output_final_result.json: 完整结果")
+        # 使用日志系统输出完成信息
+        LogUtils.log_success("完整流程执行完成！")
+        LogUtils.log_info("统计结果:")
+        LogUtils.log_info(f"   - 提取变量数量: {final_result['summary']['variables_count']}")
+        LogUtils.log_info(f"   - 子系统数量: {final_result['summary']['subsystems_count']}")
+        LogUtils.log_info(f"   - 子提示词数量: {final_result['summary']['subprompts_count']}")
+        LogUtils.log_info(f"   - CNLP转换成功: {final_result['summary']['cnlp_success_count']}")
+        LogUtils.log_info(f"   - CNLP转换失败: {final_result['summary']['cnlp_failed_count']}")
+        LogUtils.log_info("输出文件:")
+        LogUtils.log_info("   - output_step1_variables.json: 变量提取结果")
+        LogUtils.log_info("   - output_step1_text_with_vars.txt: 标记变量的文本")
+        LogUtils.log_info("   - output_step2_split.json: 完整拆分结果")
+        LogUtils.log_info("   - output_step2_mermaid.txt: Mermaid流程图")
+        LogUtils.log_info("   - output_step3_cnlp.json: CNLP转换结果")
+        LogUtils.log_info("   - output_final_result.json: 完整结果")
         
         return final_result
 
 
 def main():
-    """主函数 - 简洁的流程控制"""
-    print("🎯 提示词拆分系统 - 流程编排器")
-    print("=" * 60)
+    """主函数 - 简洁的流程控制（重构后版本）"""
+    LogUtils.log_step("提示词拆分系统", "流程编排器启动")
     
-    # 创建流程编排器实例
-    pipeline = PromptSplitPipeline()
-    
-    # 运行完整流程
-    result = pipeline.run_complete_pipeline(
-        input_file='nl_prompt.txt',
-        save_intermediate=True
-    )
-    
-    if "error" in result:
-        print(f"❌ 执行失败: {result['error']}")
+    try:
+        # 创建流程编排器实例
+        pipeline = PromptSplitPipeline()
+        
+        # 运行完整流程
+        result = pipeline.run_complete_pipeline(
+            input_file='nl_prompt.txt',
+            save_intermediate=True
+        )
+        
+        if "error" in result:
+            LogUtils.log_error(f"执行失败: {result['error']}")
+            return False
+        else:
+            LogUtils.log_success("所有步骤执行成功！")
+            return True
+            
+    except Exception as e:
+        LogUtils.log_error(f"主函数执行异常: {e}")
         return False
-    else:
-        print("✅ 所有步骤执行成功！")
-        return True
 
 
 if __name__ == '__main__':

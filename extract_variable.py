@@ -1,156 +1,347 @@
+"""
+变量提取模块
+重构后版本：使用公共工具，消除重复代码
+"""
+
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Any
+
+# 导入公共工具和重构后的LLM客户端
+from common_utils import FileUtils, TextProcessor, JSONProcessor, LogUtils, ConfigUtils
 from LLMTool import LLMApiClient
 
-# API配置
-MODEL = "gpt-5-mini"
-llm_client = LLMApiClient()
 
-def read_file(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
-        return f.read()
-
-
-def split_text_by_length(text: str, chunk_size: int = 500):
+def call_llm(chunk: str, idx: int, llm_client: LLMApiClient = None, sys_prompt: str = None) -> tuple:
     """
-    根据指定长度切割文本。
-    在寻找切割点时，会向后寻找最近的非空行，确保每段文本的完整性。
+    调用LLM处理单个分块
+    
+    Args:
+        chunk: 文本块
+        idx: 块索引
+        llm_client: LLM客户端实例
+        sys_prompt: 系统提示词
+        
+    Returns:
+        (索引, 响应内容) 元组
     """
-    if not isinstance(text, str):
-        raise TypeError("输入必须是字符串类型。")
-    if chunk_size <= 0:
-        raise ValueError("chunk_size 必须为正数。")
-
-    chunks = []
-    start = 0
-    text_length = len(text)
-
-    while start < text_length:
-        end = min(start + chunk_size, text_length)
-
-        # 检查切割点是否需要调整
-        if end < text_length:
-            # 向后寻找最近的空行（连续两个换行符）作为切割点
-            next_paragraph_break = text.find('\n\n', end)
-
-            if next_paragraph_break != -1:
-                end = next_paragraph_break + 2  # 包含两个换行符
-            else:
-                # 如果找不到空行分隔，就向后寻找最近的非空换行符
-                next_newline = text.find('\n', end)
-                if next_newline != -1:
-                    # 找到换行符后，继续寻找下一个非空行
-                    while next_newline != -1:
-                        # 判断换行符后是否为空行或只包含空白字符
-                        if text[next_newline + 1:].strip():
-                            # 如果下一行不为空，则将切割点设为当前换行符之后
-                            end = next_newline + 1
-                            break
-                        else:
-                            # 如果下一行为空，则继续向后寻找下一个换行符
-                            next_newline = text.find('\n', next_newline + 1)
-                    # 如果找不到非空行，则将切割点设为文本末尾
-                    if next_newline == -1:
-                        end = text_length
-                else:
-                    # 找不到任何换行符，直接切割到文本末尾
-                    end = text_length
-
-        chunks.append(text[start:end])
-        start = end
-
-    # 移除空字符串，这可能发生在文本以换行符结尾时
-    return [chunk for chunk in chunks if chunk.strip()]
-
-
-def call_llm(chunk, idx):
-    """调用 LLM 处理单个分块（使用http.client）"""
-    print(f"--- input chunk {idx} ---\n{chunk}\n")
+    LogUtils.log_info(f"开始处理文本块 {idx}")
+    
     try:
-        # 读取系统提示并替换占位符
-        sys_prompt = read_file('extract_var_v6.txt')
-        # sys_prompt = sys_prompt.replace("{在此粘贴原文}", chunk)
+        # 如果没有提供客户端，创建一个
+        if llm_client is None:
+            llm_client = LLMApiClient()
+        
+        # 如果没有提供系统提示，读取默认文件
+        if sys_prompt is None:
+            sys_prompt = FileUtils.read_file('extract_var_v6.txt')
+            if not sys_prompt:
+                LogUtils.log_error("无法读取系统提示文件 extract_var_v6.txt")
+                return idx, ""
+        
+        # 构建消息
         messages = [
             {"role": "system", "content": sys_prompt},
             {"role": "user", "content": chunk},
         ]
+        
+        # 调用LLM
         content = llm_client.call(messages)
-
-        return idx, content
-
+        
+        if content:
+            LogUtils.log_success(f"文本块 {idx} 处理成功")
+            return idx, content
+        else:
+            LogUtils.log_warning(f"文本块 {idx} 返回空响应")
+            return idx, ""
+            
     except Exception as e:
-        print(f"处理出错 (idx: {idx}): {str(e)}")
+        LogUtils.log_error(f"处理文本块 {idx} 失败: {e}")
         return idx, ""
 
 
-def extract_variables_from_json(json_str: str):
-    """从 LLM 返回的 JSON 字符串中提取所有变量名"""
-    if not json_str:
+def process_chunks_concurrently(chunks: List[str], max_workers: int = 5, 
+                               llm_client: LLMApiClient = None) -> List[str]:
+    """
+    并发处理文本分块，从LLM回复中提取变量名
+    
+    Args:
+        chunks: 文本块列表
+        max_workers: 最大并发数
+        llm_client: LLM客户端实例
+        
+    Returns:
+        去重后的变量名列表
+    """
+    if not chunks:
+        LogUtils.log_warning("没有文本块需要处理")
         return []
-
-    # 使用正则表达式匹配并提取 JSON 数组部分
-    match = re.search(r'\[.*?\]', json_str, re.DOTALL)
-    if not match:
+    
+    # 使用配置或默认值
+    config = ConfigUtils.get_config()
+    max_workers = min(max_workers, config.get('max_workers', 5))
+    
+    # 如果没有提供客户端，创建一个
+    if llm_client is None:
+        llm_client = LLMApiClient()
+    
+    # 读取系统提示（一次读取，所有块共用）
+    sys_prompt = FileUtils.read_file('extract_var_v6.txt')
+    if not sys_prompt:
+        LogUtils.log_error("无法读取系统提示文件")
         return []
-
-    try:
-        # 解析匹配到的 JSON 字符串
-        json_array = json.loads(match.group(0))
-        # 提取每个字典中的 'text' 字段内容
-        variable_names = [item['text'] for item in json_array if 'text' in item]
-        return variable_names
-    except json.JSONDecodeError as e:
-        print(f"解析JSON失败: {e}")
-        return []
-
-
-def process_chunks_concurrently(chunks: list[str], max_workers: int = 5):
-    """使用多线程并发处理文本分块，并从 LLM 回复中提取变量名"""
+    
+    LogUtils.log_info(f"开始并发处理 {len(chunks)} 个文本块，并发数: {max_workers}")
+    
     results = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(call_llm, chunk, i) for i, chunk in enumerate(chunks)]
-
+        # 提交所有任务
+        futures = [
+            executor.submit(call_llm, chunk, i, llm_client, sys_prompt) 
+            for i, chunk in enumerate(chunks)
+        ]
+        
+        # 收集结果
         for future in as_completed(futures):
             idx, result_str = future.result()
-            print(f"--- result {idx} ---\n{result_str}\n")
+            LogUtils.log_info(f"收到文本块 {idx} 的处理结果")
+            
             if result_str:
-                results[idx] = extract_variables_from_json(result_str)
+                # 使用公共JSON处理器提取变量
+                variables = JSONProcessor.extract_variables_from_json(result_str)
+                results[idx] = variables
+                LogUtils.log_success(f"文本块 {idx} 提取到 {len(variables)} 个变量")
             else:
                 results[idx] = []
-
+                LogUtils.log_warning(f"文本块 {idx} 未提取到变量")
+    
     # 保证输出顺序和输入顺序一致
-    ordered_results = [results[i] for i in sorted(results.keys())]
-
+    ordered_results = [results.get(i, []) for i in range(len(chunks))]
+    
     # 扁平化列表并去重
     all_variable_names = [name for sublist in ordered_results for name in sublist]
-    return list(set(all_variable_names))
+    unique_variables = list(set(all_variable_names))
+    
+    LogUtils.log_success(f"并发处理完成，共提取到 {len(unique_variables)} 个唯一变量")
+    return unique_variables
 
-def post_process(nl_with_var):
-    prompt = read_file('post_process_variable_v2.txt').replace("{{prompt_with_var}}", nl_with_var)
-    messages = [
-        {"role": "system", "content": prompt}
-    ]
-    res = llm_client.call(messages)
-    json_str = llm_client.extract_json_string(res)
-    processed_nl = json.loads(json_str)['cleaned_text']
-    return processed_nl
+
+def post_process(nl_with_var: str, llm_client: LLMApiClient = None) -> str:
+    """
+    后处理变量标记文本
+    
+    Args:
+        nl_with_var: 标记了变量的文本
+        llm_client: LLM客户端实例
+        
+    Returns:
+        处理后的文本
+    """
+    LogUtils.log_info("开始后处理变量标记")
+    
+    try:
+        # 读取后处理提示词
+        prompt_template = FileUtils.read_file('post_process_variable_v2.txt')
+        if not prompt_template:
+            LogUtils.log_error("无法读取后处理提示文件")
+            return nl_with_var
+        
+        # 替换占位符
+        prompt = prompt_template.replace("{{prompt_with_var}}", nl_with_var)
+        
+        # 如果没有提供客户端，创建一个
+        if llm_client is None:
+            llm_client = LLMApiClient()
+        
+        # 调用LLM
+        messages = [{"role": "system", "content": prompt}]
+        res = llm_client.call(messages)
+        
+        if not res:
+            LogUtils.log_warning("后处理返回空结果，使用原文本")
+            return nl_with_var
+        
+        # 提取JSON字符串
+        json_str = llm_client.extract_json_string(res)
+        if not json_str:
+            LogUtils.log_warning("未找到JSON响应，使用原文本")
+            return nl_with_var
+        
+        # 解析JSON并提取清理后的文本
+        try:
+            processed_data = json.loads(json_str)
+            processed_text = processed_data.get('cleaned_text', nl_with_var)
+            LogUtils.log_success("变量后处理完成")
+            return processed_text
+        except json.JSONDecodeError as e:
+            LogUtils.log_error(f"JSON解析失败: {e}")
+            return nl_with_var
+            
+    except Exception as e:
+        LogUtils.log_error(f"后处理失败: {e}")
+        return nl_with_var
+
+
+def extract_variables_from_text(text: str, chunk_size: int = None, max_workers: int = None) -> Dict[str, Any]:
+    """
+    从文本中提取变量的完整流程
+    
+    Args:
+        text: 原始文本
+        chunk_size: 文本分块大小
+        max_workers: 最大并发数
+        
+    Returns:
+        包含变量和处理结果的字典
+    """
+    LogUtils.log_step("变量提取", "开始完整的变量提取流程")
+    
+    if not text or not text.strip():
+        LogUtils.log_error("输入文本为空")
+        return {"error": "输入文本为空"}
+    
+    try:
+        # 获取配置
+        config = ConfigUtils.get_config()
+        chunk_size = chunk_size or config.get('chunk_size', 500)
+        max_workers = max_workers or config.get('max_workers', 5)
+        
+        # 使用公共文本处理器分割文本
+        LogUtils.log_info(f"使用分块大小: {chunk_size}")
+        chunks = TextProcessor.split_text_by_length(text, chunk_size)
+        LogUtils.log_info(f"文本已分割为 {len(chunks)} 个块")
+        
+        # 创建LLM客户端
+        llm_client = LLMApiClient()
+        
+        # 并发处理提取变量
+        variables = process_chunks_concurrently(chunks, max_workers, llm_client)
+        
+        if not variables:
+            LogUtils.log_warning("未提取到任何变量")
+            return {
+                "variables": [],
+                "original_text": text,
+                "text_with_vars": text,
+                "chunks_count": len(chunks)
+            }
+        
+        # 将变量标记到原文中
+        LogUtils.log_info("开始标记变量到原文")
+        text_with_vars = text
+        for var in variables:
+            text_with_vars = text_with_vars.replace(var, "{" + var + "}")
+        
+        # 后处理
+        LogUtils.log_info("开始后处理")
+        processed_text = post_process(text_with_vars, llm_client)
+        
+        # 清理文本
+        processed_text = TextProcessor.clean_text(processed_text)
+        
+        result = {
+            "variables": variables,
+            "original_text": text,
+            "text_with_vars": processed_text,
+            "chunks_count": len(chunks),
+            "stats": {
+                "total_variables": len(variables),
+                "chunks_processed": len(chunks),
+                "chunk_size_used": chunk_size,
+                "max_workers_used": max_workers
+            }
+        }
+        
+        LogUtils.log_success(f"变量提取完成，共提取 {len(variables)} 个变量")
+        return result
+        
+    except Exception as e:
+        LogUtils.log_error(f"变量提取流程失败: {e}")
+        return {"error": str(e)}
+
+
+def save_extraction_result(result: Dict[str, Any], output_dir: str = "output") -> bool:
+    """
+    保存变量提取结果
+    
+    Args:
+        result: 提取结果
+        output_dir: 输出目录
+        
+    Returns:
+        是否保存成功
+    """
+    try:
+        import os
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        # 保存变量列表
+        variables_file = os.path.join(output_dir, "extracted_variables.json")
+        variables_data = {
+            "variables": result.get("variables", []),
+            "stats": result.get("stats", {}),
+            "timestamp": json.dumps(json.datetime.now().isoformat()) if hasattr(json, 'datetime') else None
+        }
+        
+        if FileUtils.save_json(variables_file, variables_data):
+            LogUtils.log_success(f"变量列表已保存到 {variables_file}")
+        
+        # 保存标记变量的文本
+        text_file = os.path.join(output_dir, "text_with_variables.txt")
+        if FileUtils.save_file(text_file, result.get("text_with_vars", "")):
+            LogUtils.log_success(f"标记文本已保存到 {text_file}")
+        
+        return True
+        
+    except Exception as e:
+        LogUtils.log_error(f"保存结果失败: {e}")
+        return False
+
+
+def main():
+    """主函数 - 提供命令行接口"""
+    import sys
+    
+    # 简单的命令行参数处理
+    input_file = sys.argv[1] if len(sys.argv) > 1 else 'nl_prompt.txt'
+    
+    LogUtils.log_step("变量提取工具", f"处理文件: {input_file}")
+    
+    # 检查输入文件
+    if not FileUtils.read_file(input_file):
+        LogUtils.log_error(f"无法读取输入文件: {input_file}")
+        return
+    
+    # 读取文本
+    text = FileUtils.read_file(input_file)
+    LogUtils.log_info(f"已读取文本，长度: {len(text)} 字符")
+    
+    # 提取变量
+    result = extract_variables_from_text(text)
+    
+    if "error" in result:
+        LogUtils.log_error(f"提取失败: {result['error']}")
+        return
+    
+    # 显示结果
+    variables = result.get("variables", [])
+    print(f"\n✅ 提取完成！共找到 {len(variables)} 个变量：")
+    for i, var in enumerate(variables, 1):
+        print(f"  {i}. {var}")
+    
+    # 保存结果
+    if save_extraction_result(result):
+        print(f"\n📁 结果已保存到 output/ 目录")
+    
+    print(f"\n📊 处理统计:")
+    stats = result.get("stats", {})
+    for key, value in stats.items():
+        print(f"  - {key}: {value}")
+
 
 if __name__ == '__main__':
-    p0 = read_file('nl_prompt.txt')
-    chunks = split_text_by_length(p0)
-    # for c in chunks:
-    #     print(c)
-    #     print('='*100)
-    outputs = process_chunks_concurrently(chunks)
-    # outputs = ['精准匹配', '正常数据', '客户情绪', '产品', '周期范围', '互动中位数', '近60天笔记数小于10篇', '仅展示蒲公英达人', '特殊字段要求', '客户继续不填写', '{{userClasss}}', '内容方向完全符合要求', '模板必须按以下格式输出', 'CPM(曝光单价)', '客户是否需要精准匹配', '排竞时间', '客户话题', '达人地域', '年轻', '自我介绍', '是否全部开启还是指定部分', '客户', '人设定位', '是否开启竞品限制要求', '数据太水', '排除竞品投放过达人', '竞品限制条件', '品牌', '需求模板', '排除官方账号', '达人性别', '单个预算要求', '粉丝人群条件', '是否排竞', '太水的标准', '年轻的年龄区间', '评估维度', '自我介绍只执行一次', '刷数据', '匹配需求条件', 'CPC(阅读单价)', '排除蓝V账号', '投放周期', '是否开启投放周期', '近期爆文数', '允许选择多个内容方向', '达人要求条件', '客户继续不回复', '已获取筛选账户需求', '情感投入程度', '投放总预算', '{{talk_data}}', '首次交流', '近30日粉丝量下降博主', '粉丝活跃度占比', '是否需要先建联再提报', '博主最新微信消息', '自我介绍次数限制', '基础需求信息', '客户情感倾向', '客户称呼', '细分标签', '是否开启粉丝人群条件', '是否开启达人要求条件', '同个问题只允许询问一次', '本次提报数量', '未填写的需求信息', '是否开启特殊字段要求', '是否开启数据表现要求', '投放形式', '筛选账户需求', '避免相似回答', '内容方向', '剔除近期已合作博主', '聊天信息', '追加需求条件', '需求模板格式', '每个条件都需要换行展示', '模糊匹配达人', '数据表现要求', '仅展示竞品投放过达人', '意向达人', '其他特殊字段要求', '客户输入内容', '粉丝年龄占比', '粉丝数', '聊天记录', '达人调性', '禁止向客户透露以上信息', '回复语气', '需求是否有疑问', '竞品名称', '首次与客户交流', '达人参考链接', '需求确认模板', '数据量级', 'CPE(互动单价)', '客户已发过需求', '{{input}}', '宝子', '追加需求信息', '假数据', '阅读中位数', '粉丝性别占比', '客户产品相关问题', '性价比高', '账号类型', '配色好看']
-    print(outputs)
-    for v in outputs:
-        p0 = p0.replace(v, "{"+v+"}")
-    print(p0)
-
-    nl_with_var = read_file('nl_prompt.md')
-    pl = post_process(p0)
-    print(pl)
+    main()
 
 

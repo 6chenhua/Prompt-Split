@@ -1,67 +1,44 @@
 flowchart TD
-  %% 输入与预处理
-  A1[Start: Receive Message
-(输入: 聊天记录 {talk_data} / 最新消息 {latest_wechat_message})]
-  NORM[Normalizer
-(解析历史消息 -> normalized_chat, detected_vague_terms, detected_emotion, qa_candidate)]
-  QA[QA Handler (Interceptor)
-(命中常见QA -> 立即回复)]
-  SELF[SelfIntro (one-shot)
-发送句[43] & 句[44] + 模板句[45]-句[52]
-设置 introduction_sent=true]
-  FE[FieldExtractor
-(抽取基础字段: brand/product/total_budget/ single_budget_requirement/placement_type/content_direction/account_type)]
-  MAP[Mapper/Validator
-(映射 content_direction/account_type -> {user_classes}; 校验格式)]
-  MAPFAIL[Unmappable Handler
-(生成友好提示 -> 等待用户修正; 加入 asked_once_fields)]
-  DECIDE[Decision: Precise Matching?
-(询问是否开启精准匹配；句[57]-句[60])]
-  ADD[AdditionalCollector
-(收集6类追加条件; 严格逐行格式: 句[61]-句[97])]
-  CLAR[Clarifier
-(对模糊词汇发起澄清; 每问题只问一次; 句[99]-句[102])]
-  TIMEOUT[Timeout / Backoff
-(用户不回复 -> 一次提醒/跳过非关键字段/人工介入)]
-  FINAL[Finalizer (one-shot)
-发送确认引导语: “已确认 {需求信息}，我将开始选号，请耐心等待...” (句[104])]
-  END[End / Handover]
+  %% 顶层
+  Start([开始：读取 {{{talk_data}}} 与 {{{input}}}]) --> Read[读取聊天信息<br/>(参见句[38]-[41])]
+  Read --> QAcheck{是否为常见QA?<br/>(句[36])}
+  QAcheck -- 是 --> QAAnswer[发送 QA 回答<br/>(QA Handler)]
+  QAcheck -- 否 --> IsFirst{是否首次接触?<br/>(is_first_contact & !introduction_sent)<br/>(句[23],[43])}
+  QAAnswer --> IsFirst
 
-  %% 控制流
-  A1 --> NORM
-  NORM -->|qa_candidate? yes| QA
-  QA -->|answered| NORM
-  NORM -->|qa_candidate? no| SELF
-  SELF --> FE
-  FE --> MAP
-  MAP -->|mapped ok| DECIDE
-  MAP -->|mapping fail| MAPFAIL
-  MAPFAIL -->|user fixes| FE
-  MAPFAIL -->|no reply -> timeout| TIMEOUT
+  IsFirst -- 是 --> SelfIntro[SelfIntro（一次性）<br/>发送句[44]-[45] + 模板句[47]-[53]]
+  IsFirst -- 否 --> SkipIntro[跳过自我介绍]
+  SelfIntro --> CollectBase[收集基础需求（FieldExtractor）<br/>(句[48]-[53])]
+  SkipIntro --> CollectBase
 
-  DECIDE -->|need precise| ADD
-  DECIDE -->|no precise| FINAL
+  CollectBase --> Validate[Mapper/Validator<br/>(映射 {内容方向}/{账号类型} -> {{{userClasss}}})<br/>(句[55]-[56])]
+  Validate -- 映射失败 --> UnmapPrompt[发送友好提示（句[55]）<br/>等待一次性回复]
+  UnmapPrompt --> CollectBase
+  Validate -- 映射成功 --> Decision{是否需要精准匹配?<br/>(句[59])}
 
-  ADD --> CLAR
-  CLAR -->|answered| FE
-  CLAR -->|no definition| FE
-  CLAR -->|no reply -> timeout| TIMEOUT
+  Decision -- 不需要（否） --> Finalizer[执行选号（发送确认引导语）<br/>(句[105])]
+  Decision -- 需要（是） --> Additional[追加需求收集（句[63]-[70]<br/>逐类收集句[71]-[98]）]
 
-  TIMEOUT --> FINAL
-  FINAL --> END
+  Additional --> ClarifyCheck{是否检测到模糊词汇?<br/>(句[100])}
+  ClarifyCheck -- 是 --> Clarifier[澄清模糊词汇（句[101]）<br/>每项只问一次]
+  ClarifyCheck -- 否 --> Finalizer
+  Clarifier --> CollectBase
 
-  %% 情绪策略（影响所有用户消息）
-  subgraph EMO["Emotion Strategy (persona)"]
-    style EMO fill:#fff0b3,stroke:#333,stroke-dasharray: 5 5
-    EMO_NOTE((检测 {情绪} -> 先安抚/共鸣))
+  Finalizer --> End([结束：已确认并开始选号提示（句[105]）])
+
+  %% 情绪与拦截层（影响所有输出）
+  subgraph Interceptors["拦截与控制"]
+    Emotion[情绪策略（persona/安抚/共鸣）<br/>(句[3-6],[18],[21])]
+    Timeout[回退/超时策略（句[57]）]
   end
-  EMO_NOTE -.-> SELF
-  EMO_NOTE -.-> FE
-  EMO_NOTE -.-> CLAR
-  EMO_NOTE -.-> FINAL
 
-  %% 注释节点
-  classDef oneShot fill:#dff0d8,stroke:#2e7d32,stroke-width:1px;
-  classDef interceptor fill:#f9d6d5,stroke:#c62828,stroke-width:1px;
-  class SELF,FINAL oneShot;
-  class QA interceptor;
+  %% 拦截影响线
+  Emotion -.-> SelfIntro
+  Emotion -.-> CollectBase
+  Emotion -.-> Additional
+  Emotion -.-> Clarifier
+  Timeout -.-> UnmapPrompt
+  Timeout -.-> Finalizer
+
+  classDef oneShot fill:#f9f,stroke:#333,stroke-width:1px;
+  class SelfIntro,Finalizer oneShot;

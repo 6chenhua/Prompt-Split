@@ -1,7 +1,7 @@
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from extract_variable import read_file
+# from extract_variable import read_file
 
 from LLMTool import LLMApiClient
 
@@ -376,7 +376,8 @@ def batch_transform_cnlp(nl_prompts, max_workers=5):
 
 
 if __name__ == '__main__':
-    sub_prompts = json.loads(read_file("sub_prompts.json"))["subprompts"]
+    # sub_prompts = json.loads(read_file("sub_prompts.json"))["subprompts"]
+    sub_prompts = []
     cnlps = batch_transform_cnlp(sub_prompts)
     for i, cnlp_text in enumerate(cnlps):
         print(f"\n--- Result for Prompt {i + 1} ---")
