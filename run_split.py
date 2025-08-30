@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # 导入公共工具
 from common_utils import FileUtils, TextProcessor, LogUtils, ConfigUtils
@@ -21,6 +21,9 @@ from first_spilit import (
     llm_client
 )
 
+# 导入代码生成模块
+from code_generator import CodeGenerator
+
 
 class PromptSplitPipeline:
     """
@@ -37,6 +40,7 @@ class PromptSplitPipeline:
         """
         self.config = ConfigUtils.get_config()
         self.progress_callback = progress_callback
+        self.code_generator = CodeGenerator()  # 初始化代码生成器
         LogUtils.log_info("PromptSplit 流水线初始化完成")
     
     def _notify_progress(self, step_name: str, progress: int, message: str = "", result_data: Any = None):
@@ -154,7 +158,7 @@ class PromptSplitPipeline:
             messages.append({"role": "user", "content": text})
             
             # 调用LLM生成流程分析和mermaid图
-            response = llm_client.call(messages, "gpt-5-mini")
+            response = llm_client.call(messages)
             
             # 从响应中提取mermaid图
             pattern = r"```mermaid(.*?)```"
@@ -180,7 +184,7 @@ class PromptSplitPipeline:
             messages.append({"role": "user", "content": mermaid_content})
             
             # 调用LLM拆分子系统
-            response = llm_client.call(messages, "gpt-5-mini")
+            response = llm_client.call(messages)
             
             # 改进的JSON提取逻辑
             subsystems_data = self._extract_subsystems_json(response)
@@ -408,7 +412,7 @@ class PromptSplitPipeline:
             messages.append({"role": "user", "content": user_content})
             
             # 调用LLM生成子提示词
-            response = llm_client.call(messages, "gpt-5-mini")
+            response = llm_client.call(messages)
             
             # 改进的JSON提取逻辑（复用子系统的提取方法）
             subprompts_data = self._extract_subprompts_json(response)
@@ -490,10 +494,68 @@ class PromptSplitPipeline:
             LogUtils.log_error(error_msg)
             return {"error": error_msg}
     
-    def step3_convert_to_cnlp(self, subprompts_data: Dict[str, Any]) -> Dict[str, Any]:
+    def step2_5_generate_code(self, subprompts_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        第2.5步：为子提示词生成代码（在第二步和第三步之间插入）
+        """
+        LogUtils.log_step("第2.5步：生成代码", "开始为子系统生成代码实现")
+        self._notify_progress("代码生成", 0, "开始为子系统生成代码...")
+        
+        try:
+            # 获取代码生成配置
+            code_config = self.config.get('step2_5_code_generation', {})
+            parallel_enabled = code_config.get('parallel_processing', True)
+            max_workers = code_config.get('max_workers', 3)
+            
+            LogUtils.log_info(f"代码生成配置: 并行处理={parallel_enabled}, 最大线程数={max_workers}")
+            
+            # 使用代码生成器处理子提示词
+            code_results = self.code_generator.batch_process_subprompts(
+                subprompts_data, 
+                parallel=parallel_enabled, 
+                max_workers=max_workers
+            )
+            
+            if "error" in code_results:
+                LogUtils.log_error(f"代码生成失败: {code_results['error']}")
+                return code_results
+            
+            # 获取统计信息
+            summary = code_results.get("summary", {})
+            total_count = summary.get("total_subprompts", 0)
+            implementable_count = summary.get("implementable_count", 0)
+            successful_count = summary.get("successful_count", 0)
+            
+            LogUtils.log_success(f"代码生成完成")
+            LogUtils.log_info(f"   - 总子系统数: {total_count}")
+            LogUtils.log_info(f"   - 可实现数: {implementable_count}")
+            LogUtils.log_info(f"   - 成功生成代码数: {successful_count}")
+            
+            # 保存代码生成结果
+            try:
+                self.code_generator.save_code_generation_results(code_results)
+                LogUtils.log_success("代码生成结果已保存")
+            except Exception as e:
+                LogUtils.log_warning(f"保存代码生成结果失败: {e}")
+            
+            # 立即传递代码生成结果
+            self._notify_progress("代码生成", 100, f"成功生成 {successful_count}/{total_count} 个子系统的代码", code_results)
+            
+            return code_results
+            
+        except Exception as e:
+            error_msg = f"代码生成流程失败: {e}"
+            LogUtils.log_error(error_msg)
+            return {"error": error_msg}
+    
+    def step3_convert_to_cnlp(self, subprompts_data: Dict[str, Any], code_generation_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         第三步：转换为CNLP格式
         调用 nl2cnlp.py 中的现有函数
+        
+        Args:
+            subprompts_data: 子提示词数据
+            code_generation_result: 代码生成结果，用于跳过已生成代码的子系统
         """
         LogUtils.log_step("第三步：转换为CNLP格式", "开始CNLP格式转换流程")
         self._notify_progress("转换CNLP", 0, "开始转换为CNLP格式...")
@@ -510,10 +572,26 @@ class PromptSplitPipeline:
                 LogUtils.log_error("没有子提示词可转换")
                 return {"error": "没有子提示词可转换"}
             
-            LogUtils.log_info(f"开始转换 {len(subprompts)} 个子提示词...")
+            # 过滤掉已经成功生成代码的子系统
+            filtered_subprompts, skipped_info = self._filter_subprompts_for_cnlp(subprompts, code_generation_result)
+            
+            if not filtered_subprompts:
+                LogUtils.log_info("所有子系统都已生成代码，无需CNLP转换")
+                return {
+                    "cnlp_results": [],
+                    "total_count": len(subprompts),
+                    "success_count": 0,
+                    "failed_count": 0,
+                    "skipped_count": len(subprompts),
+                    "skipped_info": skipped_info,
+                    "original_subprompts": subprompts_data
+                }
+            
+            LogUtils.log_info(f"开始转换 {len(filtered_subprompts)} 个子提示词...")
+            LogUtils.log_info(f"跳过了 {len(subprompts) - len(filtered_subprompts)} 个已生成代码的子系统")
             
             # 使用现有的批量转换函数
-            cnlp_results = batch_transform_cnlp(subprompts)
+            cnlp_results = batch_transform_cnlp(filtered_subprompts)
             
             # 过滤出成功转换的结果
             successful_results = []
@@ -523,7 +601,7 @@ class PromptSplitPipeline:
                 if result and result.strip():
                     successful_results.append({
                         "index": i,
-                        "name": subprompts[i].get("name", f"子系统_{i+1}"),
+                        "name": filtered_subprompts[i].get("name", f"子系统_{i+1}"),
                         "cnlp": result
                     })
                 else:
@@ -535,6 +613,8 @@ class PromptSplitPipeline:
                 "total_count": len(subprompts),
                 "success_count": len(successful_results),
                 "failed_count": failed_count,
+                "skipped_count": len(subprompts) - len(filtered_subprompts),
+                "skipped_info": skipped_info,
                 "original_subprompts": subprompts_data
             }
             
@@ -547,6 +627,64 @@ class PromptSplitPipeline:
             error_msg = f"CNLP转换失败: {e}"
             LogUtils.log_error(error_msg)
             return {"error": error_msg}
+    
+    def _filter_subprompts_for_cnlp(self, subprompts: List[Dict], code_generation_result: Dict[str, Any] = None) -> tuple:
+        """
+        过滤掉已经成功生成代码的子系统，避免重复转换为CNLP
+        
+        Args:
+            subprompts: 原始子提示词列表
+            code_generation_result: 代码生成结果
+            
+        Returns:
+            tuple: (filtered_subprompts, skipped_info)
+        """
+        if not code_generation_result or "results" not in code_generation_result:
+            LogUtils.log_info("没有代码生成结果，处理所有子系统")
+            return subprompts, []
+        
+        code_results = code_generation_result["results"]
+        filtered_subprompts = []
+        skipped_info = []
+        
+        LogUtils.log_info("开始过滤已生成代码的子系统...")
+        
+        for i, subprompt in enumerate(subprompts):
+            subprompt_name = subprompt.get("name", f"子系统_{i+1}")
+            
+            # 查找对应的代码生成结果
+            code_result = None
+            if i < len(code_results):
+                code_result = code_results[i]
+            
+            # 检查是否已成功生成代码
+            has_code = code_result and code_result.get("code") is not None
+            
+            if has_code:
+                # 跳过已生成代码的子系统
+                skipped_info.append({
+                    "name": subprompt_name,
+                    "reason": "已成功生成代码",
+                    "code_length": len(code_result["code"]),
+                    "test_cases_count": len(code_result.get("test_cases", []))
+                })
+                LogUtils.log_info(f"跳过子系统 '{subprompt_name}': 已生成代码 ({len(code_result['code'])} 字符)")
+            else:
+                # 保留需要CNLP转换的子系统
+                filtered_subprompts.append(subprompt)
+                if code_result:
+                    is_implementable = code_result.get("is_implementable", False)
+                    reason = code_result.get("reason", "未知")
+                    if not is_implementable:
+                        LogUtils.log_info(f"保留子系统 '{subprompt_name}': 不适合代码实现 ({reason})")
+                    else:
+                        LogUtils.log_info(f"保留子系统 '{subprompt_name}': 代码生成失败")
+                else:
+                    LogUtils.log_info(f"保留子系统 '{subprompt_name}': 无代码生成结果")
+        
+        LogUtils.log_info(f"过滤完成: 保留 {len(filtered_subprompts)} 个子系统，跳过 {len(skipped_info)} 个子系统")
+        
+        return filtered_subprompts, skipped_info
     
     def run_complete_pipeline(self, 
                              input_file: str = 'nl_prompt.txt',
@@ -585,8 +723,17 @@ class PromptSplitPipeline:
             if step2_result.get('mermaid_content'):
                 self.save_file('output_step2_mermaid.txt', step2_result['mermaid_content'])
         
-        # 第三步：转换为CNLP
-        step3_result = self.step3_convert_to_cnlp(step2_result)
+        # 第2.5步：生成代码（新增步骤）
+        step2_5_result = self.step2_5_generate_code(step2_result.get('subprompts', {}))
+        if "error" in step2_5_result:
+            LogUtils.log_warning(f"代码生成失败，但继续执行后续步骤: {step2_5_result['error']}")
+            step2_5_result = {"error": step2_5_result["error"], "results": []}
+        
+        if save_intermediate:
+            self.save_json('output_step2_5_code.json', step2_5_result)
+        
+        # 第三步：转换为CNLP（跳过已生成代码的子系统）
+        step3_result = self.step3_convert_to_cnlp(step2_result, step2_5_result)
         if "error" in step3_result:
             return step3_result
         
@@ -597,14 +744,19 @@ class PromptSplitPipeline:
         final_result = {
             "step1_variables": step1_result,
             "step2_split": step2_result,
+            "step2_5_code": step2_5_result,
             "step3_cnlp": step3_result,
             "summary": {
                 "input_file": input_file,
                 "variables_count": len(step1_result.get('variables', [])),
                 "subsystems_count": step2_result.get('statistics', {}).get('subsystems_count', 0),
                 "subprompts_count": step2_result.get('statistics', {}).get('subprompts_count', 0),
+                "code_implementable_count": step2_5_result.get('summary', {}).get('implementable_count', 0),
+                "code_successful_count": step2_5_result.get('summary', {}).get('successful_count', 0),
+                "code_failed_count": step2_5_result.get('summary', {}).get('failed_count', 0),
                 "cnlp_success_count": step3_result.get('success_count', 0),
-                "cnlp_failed_count": step3_result.get('failed_count', 0)
+                "cnlp_failed_count": step3_result.get('failed_count', 0),
+                "cnlp_skipped_count": step3_result.get('skipped_count', 0)
             }
         }
         
@@ -617,13 +769,19 @@ class PromptSplitPipeline:
         LogUtils.log_info(f"   - 提取变量数量: {final_result['summary']['variables_count']}")
         LogUtils.log_info(f"   - 子系统数量: {final_result['summary']['subsystems_count']}")
         LogUtils.log_info(f"   - 子提示词数量: {final_result['summary']['subprompts_count']}")
+        LogUtils.log_info(f"   - 可实现代码数量: {final_result['summary']['code_implementable_count']}")
+        LogUtils.log_info(f"   - 成功生成代码数量: {final_result['summary']['code_successful_count']}")
+        LogUtils.log_info(f"   - 代码生成失败数量: {final_result['summary']['code_failed_count']}")
         LogUtils.log_info(f"   - CNLP转换成功: {final_result['summary']['cnlp_success_count']}")
         LogUtils.log_info(f"   - CNLP转换失败: {final_result['summary']['cnlp_failed_count']}")
+        LogUtils.log_info(f"   - CNLP转换跳过: {final_result['summary']['cnlp_skipped_count']} (已生成代码)")
         LogUtils.log_info("输出文件:")
         LogUtils.log_info("   - output_step1_variables.json: 变量提取结果")
         LogUtils.log_info("   - output_step1_text_with_vars.txt: 标记变量的文本")
         LogUtils.log_info("   - output_step2_split.json: 完整拆分结果")
         LogUtils.log_info("   - output_step2_mermaid.txt: Mermaid流程图")
+        LogUtils.log_info("   - output_step2_5_code.json: 代码生成结果")
+        LogUtils.log_info("   - gen_code/output/: 生成的代码文件")
         LogUtils.log_info("   - output_step3_cnlp.json: CNLP转换结果")
         LogUtils.log_info("   - output_final_result.json: 完整结果")
         

@@ -1,0 +1,22 @@
+def generate_password(passwordstart, index, password):
+    """
+    根据输入计算循环次数和生成完整口令。
+    
+    参数:
+    - passwordstart: 初始口令数字 (可以为空)
+    - index: 当前循环的索引值
+    - password: 口令词
+    返回:
+    - 完整口令数字或空字符串
+    - 完整口令
+    """
+    if not passwordstart:
+        complete_number = ''
+    else:
+        complete_number = str(int(passwordstart) + int(index))
+    
+    if complete_number:
+        complete_password = password + complete_number
+    else:
+        complete_password = password
+    return complete_number, complete_password

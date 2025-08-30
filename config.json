@@ -13,7 +13,7 @@
   },
   "api": {
     "url": "https://api.rcouyi.com",
-    "key": "sk-rJeYV6eGEYtqaEmpB2B4331bCdAa4474971d7a6236D4Fe07",
+    "key": "sk-V0s4xmnT70wbwPPe160dBaCc96A74fB9Ae850fFc6dE6136b",
     "default_model": "gpt-5-mini",
     "timeout": 30,
     "max_retries": 3,
@@ -71,6 +71,12 @@
     "subsystem_min_size": 2,
     "max_subsystems": 10,
     "generate_diagrams": true
+  },
+  "step2_5_code_generation": {
+    "parallel_processing": true,
+    "max_workers": 3,
+    "test_case_count": 5,
+    "timeout_per_task": 60
   },
   "step3_cnlp": {
     "batch_size": 5,

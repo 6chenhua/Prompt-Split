@@ -1,0 +1,25 @@
+{
+  "test_type": "parallel_performance_comparison",
+  "timestamp": 1756582320,
+  "subprompts_count": 4,
+  "serial_time": 382.47,
+  "parallel_time": 91.42,
+  "speedup": 4.18,
+  "time_saved": 291.05,
+  "serial_summary": {
+    "total_subprompts": 4,
+    "implementable_count": 3,
+    "successful_count": 3,
+    "failed_count": 1,
+    "processing_time": 382.46,
+    "parallel_processing": false
+  },
+  "parallel_summary": {
+    "total_subprompts": 4,
+    "implementable_count": 3,
+    "successful_count": 3,
+    "failed_count": 1,
+    "processing_time": 91.42,
+    "parallel_processing": true
+  }
+}

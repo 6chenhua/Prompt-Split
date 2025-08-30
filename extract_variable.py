@@ -35,7 +35,7 @@ def call_llm(chunk: str, idx: int, llm_client: LLMApiClient = None, sys_prompt: 
         
         # 如果没有提供系统提示，读取默认文件
         if sys_prompt is None:
-            sys_prompt = FileUtils.read_file('extract_var_v6.txt')
+            sys_prompt = FileUtils.read_file('my_prompts/extract_var_v6.txt')
             if not sys_prompt:
                 LogUtils.log_error("无法读取系统提示文件 extract_var_v6.txt")
                 return idx, ""
@@ -87,7 +87,7 @@ def process_chunks_concurrently(chunks: List[str], max_workers: int = 5,
         llm_client = LLMApiClient()
     
     # 读取系统提示（一次读取，所有块共用）
-    sys_prompt = FileUtils.read_file('extract_var_v6.txt')
+    sys_prompt = FileUtils.read_file('my_prompts/extract_var_v6.txt')
     if not sys_prompt:
         LogUtils.log_error("无法读取系统提示文件")
         return []
@@ -142,7 +142,7 @@ def post_process(nl_with_var: str, llm_client: LLMApiClient = None) -> str:
     
     try:
         # 读取后处理提示词
-        prompt_template = FileUtils.read_file('post_process_variable_v2.txt')
+        prompt_template = FileUtils.read_file('my_prompts/post_process_variable_v2.txt')
         if not prompt_template:
             LogUtils.log_error("无法读取后处理提示文件")
             return nl_with_var
@@ -162,21 +162,49 @@ def post_process(nl_with_var: str, llm_client: LLMApiClient = None) -> str:
             LogUtils.log_warning("后处理返回空结果，使用原文本")
             return nl_with_var
         
-        # 提取JSON字符串
-        json_str = llm_client.extract_json_string(res)
-        if not json_str:
-            LogUtils.log_warning("未找到JSON响应，使用原文本")
-            return nl_with_var
+        # 尝试多种方式提取和解析JSON
+        processed_text = nl_with_var
         
-        # 解析JSON并提取清理后的文本
+        # 方法1: 使用LLM客户端的JSON提取
+        json_str = llm_client.extract_json_string(res)
+        if json_str:
+            try:
+                processed_data = json.loads(json_str)
+                if 'cleaned_text' in processed_data:
+                    processed_text = processed_data['cleaned_text']
+                    LogUtils.log_success("变量后处理完成")
+                    return processed_text
+            except json.JSONDecodeError as e:
+                LogUtils.log_warning(f"方法1 JSON解析失败: {e}")
+        
+        # 方法2: 直接尝试解析整个响应
         try:
-            processed_data = json.loads(json_str)
-            processed_text = processed_data.get('cleaned_text', nl_with_var)
-            LogUtils.log_success("变量后处理完成")
-            return processed_text
-        except json.JSONDecodeError as e:
-            LogUtils.log_error(f"JSON解析失败: {e}")
-            return nl_with_var
+            processed_data = json.loads(res)
+            if 'cleaned_text' in processed_data:
+                processed_text = processed_data['cleaned_text']
+                LogUtils.log_success("变量后处理完成")
+                return processed_text
+        except json.JSONDecodeError:
+            LogUtils.log_info("方法2 JSON解析失败，尝试其他方法")
+        
+        # 方法3: 使用正则表达式提取JSON块
+        import re
+        json_pattern = r'\{[^{}]*"cleaned_text"[^{}]*\}'
+        matches = re.findall(json_pattern, res, re.DOTALL)
+        for match in matches:
+            try:
+                processed_data = json.loads(match)
+                if 'cleaned_text' in processed_data:
+                    processed_text = processed_data['cleaned_text']
+                    LogUtils.log_success("变量后处理完成")
+                    return processed_text
+            except json.JSONDecodeError:
+                continue
+        
+        # 如果所有方法都失败，使用原文本
+        LogUtils.log_warning("所有JSON解析方法都失败，使用原文本")
+        LogUtils.log_success("变量后处理完成")
+        return processed_text
             
     except Exception as e:
         LogUtils.log_error(f"后处理失败: {e}")

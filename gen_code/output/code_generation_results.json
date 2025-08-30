@@ -1,0 +1,150 @@
+{
+  "results": [
+    {
+      "name": "输入处理与初始化子系统",
+      "original_prompt": "输入：{用户操作}和{数据}",
+      "is_implementable": false,
+      "code": null,
+      "test_cases": [],
+      "error": null,
+      "annotation": "",
+      "reason": "需求过于模糊，缺少具体的用户操作描述和数据信息，无法明确实现目标"
+    },
+    {
+      "name": "用户认证子系统",
+      "original_prompt": "用户认证：验证{用户身份}和{权限}",
+      "is_implementable": true,
+      "code": "from flask_login import UserMixin\nfrom werkzeug.security import check_password_hash\nfrom flask_sqlalchemy import SQLAlchemy\n\ndb = SQLAlchemy()\n\nclass Role(db.Model):\n    id = db.Column(db.Integer, primary_key=True)\n    name = db.Column(db.String(50), unique=True, nullable=False)\n    permissions = db.Column(db.JSON, default=[])\n    users = db.relationship('User', backref='role', lazy=True)\n\nclass User(UserMixin, db.Model):\n    id = db.Column(db.Integer, primary_key=True)\n    username = db.Column(db.String(50), unique=True, nullable=False)\n    password_hash = db.Column(db.String(128), nullable=False)\n    role_id = db.Column(db.Integer, db.ForeignKey('role.id'))\n    \n    def verify_password(self, password):\n        return check_password_hash(self.password_hash, password)\n    \n    def has_permission(self, permission):\n        if not self.role or not self.role.permissions:\n            return False\n        return permission in self.role.permissions\n\nclass AuthService:\n    @staticmethod\n    def authenticate(username, password):\n        user = User.query.filter_by(username=username).first()\n        if user and user.verify_password(password):\n            return user\n        return None\n    \n    @staticmethod\n    def check_permission(user, permission):\n        if not user:\n            return False\n        return user.has_permission(permission)",
+      "test_cases": [
+        {
+          "input_code": "from werkzeug.security import generate_password_hash\n# 创建角色和用户\nrole = Role(name='admin', permissions=['edit'])\ndb.session.add(role)\ndb.session.commit()\nuser = User(username='valid_user', password_hash=generate_password_hash('correct_pass'), role_id=role.id)\ndb.session.add(user)\ndb.session.commit()\n# 认证测试\nauth_result = AuthService.authenticate('valid_user', 'correct_pass')\nprint(auth_result.username if auth_result else None)",
+          "expected_output": "valid_user"
+        },
+        {
+          "input_code": "from werkzeug.security import generate_password_hash\n# 创建测试用户\nuser = User(username='wrong_pass_user', password_hash=generate_password_hash('right_pass'), role_id=None)\ndb.session.add(user)\ndb.session.commit()\n# 错误密码认证\nprint(AuthService.authenticate('wrong_pass_user', 'wrong_pass'))",
+          "expected_output": "None"
+        },
+        {
+          "input_code": "# 不存在的用户认证\nprint(AuthService.authenticate('nonexistent_user', 'any_password'))",
+          "expected_output": "None"
+        },
+        {
+          "input_code": "# 创建含权限角色和用户\nrole = Role(name='perm_role', permissions=['required_perm'])\ndb.session.add(role)\ndb.session.commit()\nuser = User(username='perm_user', password_hash='', role_id=role.id)\ndb.session.add(user)\ndb.session.commit()\nuser = User.query.filter_by(username='perm_user').first()\n# 检查权限\nprint(AuthService.check_permission(user, 'required_perm'))",
+          "expected_output": "True"
+        },
+        {
+          "input_code": "# 创建无权限角色\nrole = Role(name='no_perm_role', permissions=['other_perm'])\ndb.session.add(role)\ndb.session.commit()\nuser = User(username='no_perm_user', password_hash='', role_id=role.id)\ndb.session.add(user)\ndb.session.commit()\nuser = User.query.filter_by(username='no_perm_user').first()\n# 检查无权限\nprint(AuthService.check_permission(user, 'missing_perm'))",
+          "expected_output": "False"
+        }
+      ],
+      "error": null,
+      "annotation": "1. 使用数据库存储用户信息(如用户名、哈希密码)及权限数据(如角色、权限列表); 2. 实现身份验证:接收用户凭证(如用户名密码),验证密码哈希匹配性; 3. 实现权限检查:基于用户角色或权限列表,判断是否有权限执行操作; 4. 可结合现有库如Flask-Login、Django Auth或PyJWT简化开发。",
+      "reason": ""
+    },
+    {
+      "name": "业务操作处理子系统",
+      "original_prompt": "任务创建：创建新的{任务项目}；情感分析：分析{用户的情感状态}；{数据}统计：统计{任务完成情况}",
+      "is_implementable": true,
+      "code": "import json\nimport os\nfrom datetime import datetime\nfrom textblob import TextBlob\nimport pandas as pd\n\nclass Task:\n    def __init__(self, task_id, title, description, created_at=None, completed=False, completed_at=None):\n        self.task_id = task_id\n        self.title = title\n        self.description = description\n        self.created_at = created_at if created_at else datetime.now().isoformat()\n        self.completed = completed\n        self.completed_at = completed_at\n    \n    def to_dict(self):\n        return {\n            'task_id': self.task_id,\n            'title': self.title,\n            'description': self.description,\n            'created_at': self.created_at,\n            'completed': self.completed,\n            'completed_at': self.completed_at\n        }\n    \n    @classmethod\n    def from_dict(cls, data):\n        return cls(\n            task_id=data['task_id'],\n            title=data['title'],\n            description=data['description'],\n            created_at=data.get('created_at'),\n            completed=data.get('completed', False),\n            completed_at=data.get('completed_at')\n        )\n\nclass TaskManager:\n    def __init__(self, file_path='tasks.json'):\n        self.file_path = file_path\n        self._initialize_file()\n    \n    def _initialize_file(self):\n        if not os.path.exists(self.file_path):\n            with open(self.file_path, 'w') as f:\n                json.dump([], f)\n    \n    def get_next_task_id(self):\n        tasks = self.get_all_tasks()\n        if not tasks:\n            return 1\n        return max(task.task_id for task in tasks) + 1\n    \n    def create_task(self, title, description):\n        task_id = self.get_next_task_id()\n        task = Task(task_id, title, description)\n        tasks = self.get_all_tasks()\n        tasks.append(task)\n        \n        with open(self.file_path, 'w') as f:\n            json.dump([t.to_dict() for t in tasks], f, indent=2)\n        \n        return task\n    \n    def get_all_tasks(self):\n        try:\n            with open(self.file_path, 'r') as f:\n                tasks_data = json.load(f)\n            return [Task.from_dict(data) for data in tasks_data]\n        except (FileNotFoundError, json.JSONDecodeError):\n            return []\n    \n    def mark_task_completed(self, task_id):\n        tasks = self.get_all_tasks()\n        for task in tasks:\n            if task.task_id == task_id:\n                task.completed = True\n                task.completed_at = datetime.now().isoformat()\n                \n                with open(self.file_path, 'w') as f:\n                    json.dump([t.to_dict() for t in tasks], f, indent=2)\n                return True\n        return False\n\nclass SentimentAnalyzer:\n    @staticmethod\n    def analyze_sentiment(text):\n        if not text:\n            return {'polarity': 0, 'subjectivity': 0, 'sentiment': 'neutral'}\n        \n        analysis = TextBlob(text)\n        polarity = analysis.sentiment.polarity\n        \n        if polarity > 0.1:\n            sentiment = 'positive'\n        elif polarity < -0.1:\n            sentiment = 'negative'\n        else:\n            sentiment = 'neutral'\n        \n        return {\n            'polarity': polarity,\n            'subjectivity': analysis.sentiment.subjectivity,\n            'sentiment': sentiment\n        }\n\nclass TaskStatistics:\n    def __init__(self, task_manager):\n        self.task_manager = task_manager\n    \n    def get_basic_stats(self):\n        tasks = self.task_manager.get_all_tasks()\n        if not tasks:\n            return {'total_tasks': 0, 'completed_tasks': 0, 'completion_rate': 0.0}\n        \n        total_tasks = len(tasks)\n        completed_tasks = sum(1 for task in tasks if task.completed)\n        completion_rate = completed_tasks / total_tasks if total_tasks > 0 else 0.0\n        \n        return {\n            'total_tasks': total_tasks,\n            'completed_tasks': completed_tasks,\n            'completion_rate': round(completion_rate, 2)\n        }\n    \n    def get_detailed_stats(self):\n        tasks = self.task_manager.get_all_tasks()\n        if not tasks:\n            return pd.DataFrame(columns=['task_id', 'title', 'created_at', 'completed', 'completed_at'])\n        \n        tasks_data = [task.to_dict() for task in tasks]\n        df = pd.DataFrame(tasks_data)\n        \n        df['created_at'] = pd.to_datetime(df['created_at'])\n        if 'completed_at' in df.columns:\n            df['completed_at'] = pd.to_datetime(df['completed_at'])\n        \n        return df",
+      "test_cases": [
+        {
+          "input_code": "tm = TaskManager(file_path='test_task1.json'); tm.create_task('Learn Python', 'Study basic syntax'); stats = TaskStatistics(tm).get_basic_stats(); print(stats['total_tasks'])",
+          "expected_output": "1"
+        },
+        {
+          "input_code": "print(SentimentAnalyzer.analyze_sentiment('I am excited to finish this task!')['sentiment'])",
+          "expected_output": "positive"
+        },
+        {
+          "input_code": "print(SentimentAnalyzer.analyze_sentiment('This task is difficult and I am frustrated.')['sentiment'])",
+          "expected_output": "negative"
+        },
+        {
+          "input_code": "tm = TaskManager(file_path='test_task4.json'); print(tm.mark_task_completed(5))",
+          "expected_output": "False"
+        },
+        {
+          "input_code": "tm = TaskManager(file_path='test_task5.json'); tm.create_task('Read book', 'Chapter 1-3'); tm.mark_task_completed(1); stats = TaskStatistics(tm).get_basic_stats(); print(f'Total: {stats['total_tasks']}, Completed: {stats['completed_tasks']}, Rate: {stats['completion_rate']}')",
+          "expected_output": "Total: 1, Completed: 1, Rate: 1.0"
+        }
+      ],
+      "error": null,
+      "annotation": "1. 任务创建：使用字典/类定义任务结构，通过JSON文件或数据库（如SQLite）存储任务数据；2. 情感分析：利用NLTK、TextBlob或VADER库，或通过Hugging Face transformers调用预训练模型（如BERT）处理文本情感；3. 数据统计：读取存储的任务数据，使用Python基础语法或pandas库计算完成任务数、完成率等指标。",
+      "reason": ""
+    },
+    {
+      "name": "结果输出子系统",
+      "original_prompt": "输出：{处理结果}和{反馈}",
+      "is_implementable": false,
+      "code": null,
+      "test_cases": [],
+      "error": null,
+      "annotation": "",
+      "reason": "需求中“处理结果”和“反馈”为模糊占位符，未明确具体内容、数据源或计算逻辑，缺乏实现所需的具体信息，无法用Python代码实现。"
+    }
+  ],
+  "summary": {
+    "total_subprompts": 4,
+    "implementable_count": 2,
+    "successful_count": 2,
+    "failed_count": 2,
+    "processing_time": 117.66,
+    "parallel_processing": true
+  },
+  "original_subprompts": {
+    "subprompts": [
+      {
+        "name": "输入处理与初始化子系统",
+        "prompt": "输入：{用户操作}和{数据}",
+        "inputs": [
+          "用户操作",
+          "数据"
+        ],
+        "outputs": [
+          "current_operation",
+          "is_authenticated"
+        ]
+      },
+      {
+        "name": "用户认证子系统",
+        "prompt": "用户认证：验证{用户身份}和{权限}",
+        "inputs": [
+          "current_operation",
+          "is_authenticated",
+          "用户身份",
+          "权限"
+        ],
+        "outputs": [
+          "is_authenticated",
+          "认证结果"
+        ]
+      },
+      {
+        "name": "业务操作处理子系统",
+        "prompt": "任务创建：创建新的{任务项目}；情感分析：分析{用户的情感状态}；{数据}统计：统计{任务完成情况}",
+        "inputs": [
+          "current_operation",
+          "is_authenticated",
+          "数据"
+        ],
+        "outputs": [
+          "处理结果",
+          "反馈"
+        ]
+      },
+      {
+        "name": "结果输出子系统",
+        "prompt": "输出：{处理结果}和{反馈}",
+        "inputs": [
+          "处理结果",
+          "反馈"
+        ],
+        "outputs": [
+          "处理结果",
+          "反馈"
+        ]
+      }
+    ],
+    "collaboration": "输入处理与初始化子系统接收用户输入{用户操作}和{数据}，初始化current_operation和is_authenticated（初始为false）并传递给用户认证子系统；用户认证子系统验证{用户身份}和{权限}，认证成功则将current_operation和is_authenticated=true传递给业务操作处理子系统，认证失败则直接将认证结果（错误信息）传递给结果输出子系统；业务操作处理子系统根据current_operation执行任务创建、情感分析或数据统计逻辑，处理完成后将{处理结果}和{反馈}传递给结果输出子系统；结果输出子系统最终输出{处理结果}和{反馈}"
+  }
+}

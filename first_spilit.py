@@ -847,7 +847,7 @@ sub_prompt_messages = [
 
 def gen_mermaid_content(text) -> list:
     generate_mermaid_messages.append({"role": "user", "content": text})
-    res = llm_client.call(generate_mermaid_messages, "gpt-5-mini")
+    res = llm_client.call(generate_mermaid_messages)
     pattern = r"```mermaid(.*?)```"
 
     # 使用 re.findall 查找所有匹配项
@@ -910,7 +910,7 @@ flowchart TD
   QA -- 拒答并引导回创作 --> COMPOSE
 """
     split_messages.append({"role": "user", "content": mermaid})
-    split_result = llm_client.call(split_messages, 'gpt-5-mini')
+    split_result = llm_client.call(split_messages)
     subsystems = llm_client.extract_json_string(split_result)
     print('='*100)
     print(subsystems)
@@ -949,7 +949,7 @@ flowchart TD
 }
     '''
     sub_prompt_messages.append({"role": "user", "content": '<<<初始提示词：\n' + user_input + '\n用户初始提示词结束>>>\n\n' + subsystems})
-    sub_prompts = llm_client.call(sub_prompt_messages, "gpt-5-mini")
+    sub_prompts = llm_client.call(sub_prompt_messages)
     print(sub_prompts)
 '''
 

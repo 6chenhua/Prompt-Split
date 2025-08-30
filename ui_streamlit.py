@@ -2,6 +2,7 @@
 AI提示词智能拆分工具 - Streamlit Web界面
 提供现代化的Web界面，支持实时进度显示和结果可视化
 """
+from urllib.parse import urlparse
 
 import streamlit as st
 import time
@@ -127,6 +128,7 @@ class ProgressTracker:
             {"name": "生成Mermaid图", "status": "pending", "message": "", "progress": 0, "result": None, "icon": "🎨"},
             {"name": "拆分子系统", "status": "pending", "message": "", "progress": 0, "result": None, "icon": "🧩"},
             {"name": "生成子提示词", "status": "pending", "message": "", "progress": 0, "result": None, "icon": "📝"},
+            {"name": "代码生成", "status": "pending", "message": "", "progress": 0, "result": None, "icon": "💻"},
             {"name": "转换CNLP", "status": "pending", "message": "", "progress": 0, "result": None, "icon": "🔄"},
             {"name": "整合结果", "status": "pending", "message": "", "progress": 0, "result": None, "icon": "📋"}
         ]
@@ -398,10 +400,15 @@ def setup_user_api_config(api_key: str, base_url: str, model: str):
         # 获取全局LLM客户端实例并更新配置
         import first_spilit
         if hasattr(first_spilit, 'llm_client'):
+            # 验证API key不为空
+            if not api_key or not api_key.strip():
+                st.error(" API Key不能为空，请输入有效的API Key")
+                return
+            
             first_spilit.llm_client.api_key = api_key
             if base_url:
                 # 解析URL设置host和path
-                from urllib.parse import urlparse
+                first_spilit.llm_client.api_key = api_key.strip()
                 parsed = urlparse(base_url)
                 first_spilit.llm_client.host = parsed.netloc
                 
@@ -553,6 +560,8 @@ def render_step_result(step_name: str, result_data: Any):
         render_subsystem_result(result_data)
     elif step_name == "生成子提示词":
         render_subprompt_result(result_data)
+    elif step_name == "代码生成":
+        render_code_generation_result(result_data)
     elif step_name == "转换CNLP":
         render_cnlp_result(result_data)
     elif step_name == "整合结果":
@@ -656,7 +665,7 @@ def render_variable_processing_result(data: Any):
     if isinstance(data, dict):
         if 'processed_text' in data:
             st.subheader("处理后的文本")
-            st.text_area("处理后的文本内容", data['processed_text'], height=200, disabled=True, label_visibility="collapsed")
+            st.text_area("处理后的文本内容", data['processed_text'], height=200, disabled=True)
         
         if 'changes' in data:
             st.subheader("处理变更")
@@ -717,7 +726,7 @@ def render_subprompt_result(data: Any):
         for i, prompt in enumerate(subprompts, 1):
             with st.expander(f"子提示词 {i}: {prompt.get('name', f'提示词{i}')}"):
                 if 'prompt' in prompt:
-                    st.text_area("提示词内容", prompt['prompt'], height=150, disabled=True, label_visibility="collapsed")
+                    st.text_area("提示词内容", prompt['prompt'], height=150, disabled=True)
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -730,6 +739,79 @@ def render_subprompt_result(data: Any):
                         st.text(prompt['output'])
     else:
         st.text(f"子提示词生成结果: {data}")
+
+
+def render_code_generation_result(data: Any):
+    """渲染代码生成结果"""
+    if isinstance(data, dict) and 'results' in data:
+        results = data['results']
+        summary = data.get('summary', {})
+        
+        # 显示统计信息
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("总子系统数", summary.get('total_subprompts', 0))
+        with col2:
+            st.metric("可实现数", summary.get('implementable_count', 0))
+        with col3:
+            st.metric("生成成功", summary.get('successful_count', 0))
+        with col4:
+            st.metric("生成失败", summary.get('failed_count', 0))
+        
+        # 显示每个子系统的代码生成结果
+        for i, result in enumerate(results, 1):
+            name = result.get('name', f'子系统{i}')
+            is_implementable = result.get('is_implementable', False)
+            has_code = result.get('code') is not None
+            
+            # 根据状态选择图标和标题颜色
+            if has_code:
+                icon = "✅"
+                status_color = "green"
+            elif is_implementable:
+                icon = "⚠️"
+                status_color = "orange"
+            else:
+                icon = "❌"
+                status_color = "red"
+            
+            with st.expander(f"{icon} 子系统 {i}: {name}", expanded=False):
+                if not is_implementable:
+                    st.error(f"**不适合代码实现:** {result.get('reason', '未知原因')}")
+                elif not has_code:
+                    st.warning(f"**代码生成失败:** {result.get('error', '未知错误')}")
+                else:
+                    st.success("**代码生成成功**")
+                    
+                    # 显示实现注释
+                    if result.get('annotation'):
+                        st.info(f"**实现思路:** {result['annotation']}")
+                    
+                    # 显示生成的代码
+                    if result.get('code'):
+                        st.subheader("生成的代码")
+                        st.code(result['code'], language="python")
+                    
+                    # 显示测试用例
+                    test_cases = result.get('test_cases', [])
+                    if test_cases:
+                        st.subheader(f"测试用例 ({len(test_cases)} 个)")
+                        for j, test_case in enumerate(test_cases, 1):
+                            with st.container():
+                                st.write(f"**测试用例 {j}:**")
+                                col_input, col_output = st.columns(2)
+                                with col_input:
+                                    st.write("**输入代码:**")
+                                    st.code(test_case.get('input_code', ''), language="python")
+                                with col_output:
+                                    st.write("**预期输出:**")
+                                    st.code(test_case.get('expected_output', ''), language="text")
+                
+                # 显示原始提示词（折叠状态）
+                with st.expander("查看原始提示词", expanded=False):
+                    st.text_area("原始提示词", result.get('original_prompt', ''), height=100, disabled=True)
+    else:
+        st.text(f"代码生成结果: {data}")
 
 
 def render_cnlp_result(data: Any):
@@ -949,8 +1031,9 @@ def process_text_async(input_text: str, chunk_size: int, max_workers: int, track
             "生成Mermaid图": 4,
             "拆分子系统": 5,
             "生成子提示词": 6,
-            "转换CNLP": 7,
-            "整合结果": 8
+            "代码生成": 7,
+            "转换CNLP": 8,
+            "整合结果": 9
         }
         
         # 创建进度回调函数
@@ -995,10 +1078,17 @@ def process_text_async(input_text: str, chunk_size: int, max_workers: int, track
             tracker.error_step(step_mapping.get("拆分子系统", 5), step2_result["error"])
             return
         
-        # 步骤3: CNLP转换（现在会通过进度回调自动更新结果）
-        step3_result = pipeline.step3_convert_to_cnlp(step2_result.get("subprompts", {}))
+        # 步骤2.5: 代码生成（新增步骤）
+        step2_5_result = pipeline.step2_5_generate_code(step2_result.get("subprompts", {}))
+        if "error" in step2_5_result:
+            # 代码生成失败不中断整个流程，只记录警告
+            LogUtils.log_warning(f"代码生成失败，但继续执行后续步骤: {step2_5_result['error']}")
+            step2_5_result = {"error": step2_5_result["error"], "results": []}
+        
+        # 步骤3: CNLP转换（跳过已生成代码的子系统）
+        step3_result = pipeline.step3_convert_to_cnlp(step2_result.get("subprompts", {}), step2_5_result)
         if "error" in step3_result:
-            tracker.error_step(step_mapping.get("转换CNLP", 7), step3_result["error"])
+            tracker.error_step(step_mapping.get("转换CNLP", 8), step3_result["error"])
             return
         
         # 最终整合
@@ -1020,13 +1110,17 @@ def process_text_async(input_text: str, chunk_size: int, max_workers: int, track
                 "variables_extracted": len(step1_result.get("variables", [])),
                 "subsystems_created": len(step2_result.get("subsystems", {}).get("subsystems", [])),
                 "subprompts_generated": len(step2_result.get("subprompts", {}).get("subprompts", [])),
-                "cnlp_converted": len(step3_result.get("cnlp_results", []))
+                "code_implementable": step2_5_result.get("summary", {}).get("implementable_count", 0),
+                "code_successful": step2_5_result.get("summary", {}).get("successful_count", 0),
+                "cnlp_converted": len(step3_result.get("cnlp_results", [])),
+                "cnlp_skipped": step3_result.get("skipped_count", 0)
             }
         }
         
         final_result = {
             "step1_result": step1_result,
             "step2_result": step2_result,
+            "step2_5_result": step2_5_result,
             "step3_result": step3_result,
             "processing_time": time.time()
         }
@@ -1125,11 +1219,14 @@ def main():
         with col2:
             # 生成处理报告
             variables = st.session_state.result_data["step1_result"].get("variables", [])
+            code_summary = st.session_state.result_data.get("step2_5_result", {}).get("summary", {})
             report = f"""# AI提示词拆分处理报告
 
 ## 处理统计
 - 提取变量数量: {len(variables)}
 - 子系统数量: {len(st.session_state.result_data["step2_result"].get("subsystems", {}).get("subsystems", []))}
+- 可实现代码数量: {code_summary.get("implementable_count", 0)}
+- 成功生成代码数量: {code_summary.get("successful_count", 0)}
 - 生成CNLP数量: {len(st.session_state.result_data["step3_result"].get("cnlp_results", []))}
 
 ## 提取的变量
