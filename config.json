@@ -73,6 +73,7 @@
     "generate_diagrams": true
   },
   "step2_5_code_generation": {
+    "enabled": true,
     "parallel_processing": true,
     "max_workers": 3,
     "test_case_count": 5,

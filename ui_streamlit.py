@@ -1020,7 +1020,7 @@ def process_text_async(input_text: str, chunk_size: int, max_workers: int, track
     try:
         # 导入处理模块
         from run_split import PromptSplitPipeline
-        from common_utils import LogUtils
+        from common_utils import LogUtils, ConfigUtils
         
         # 定义步骤到索引的映射
         step_mapping = {
@@ -1078,12 +1078,23 @@ def process_text_async(input_text: str, chunk_size: int, max_workers: int, track
             tracker.error_step(step_mapping.get("拆分子系统", 5), step2_result["error"])
             return
         
-        # 步骤2.5: 代码生成（新增步骤）
-        step2_5_result = pipeline.step2_5_generate_code(step2_result.get("subprompts", {}))
-        if "error" in step2_5_result:
-            # 代码生成失败不中断整个流程，只记录警告
-            LogUtils.log_warning(f"代码生成失败，但继续执行后续步骤: {step2_5_result['error']}")
-            step2_5_result = {"error": step2_5_result["error"], "results": []}
+        # 步骤2.5: 代码生成（新增步骤，可配置禁用）
+        config = ConfigUtils.get_config()
+        code_generation_enabled = config.get('step2_5_code_generation', {}).get('enabled', True)
+        
+        if code_generation_enabled:
+            step2_5_result = pipeline.step2_5_generate_code(step2_result.get("subprompts", {}))
+            if "error" in step2_5_result:
+                # 代码生成失败不中断整个流程，只记录警告
+                LogUtils.log_warning(f"代码生成失败，但继续执行后续步骤: {step2_5_result['error']}")
+                step2_5_result = {"error": step2_5_result["error"], "results": []}
+        else:
+            LogUtils.log_info("代码生成步骤已禁用，跳过...")
+            step2_5_result = {
+                "summary": {"total_count": 0, "implementable_count": 0, "successful_count": 0, "failed_count": 0},
+                "results": [],
+                "disabled": True
+            }
         
         # 步骤3: CNLP转换（跳过已生成代码的子系统）
         step3_result = pipeline.step3_convert_to_cnlp(step2_result.get("subprompts", {}), step2_5_result)

@@ -498,12 +498,22 @@ class PromptSplitPipeline:
         """
         第2.5步：为子提示词生成代码（在第二步和第三步之间插入）
         """
+        # 获取代码生成配置
+        code_config = self.config.get('step2_5_code_generation', {})
+        
+        # 检查是否启用代码生成
+        if not code_config.get('enabled', True):
+            LogUtils.log_info("代码生成功能已禁用，跳过此步骤")
+            return {
+                "summary": {"total_count": 0, "implementable_count": 0, "successful_count": 0, "failed_count": 0},
+                "results": [],
+                "disabled": True
+            }
+        
         LogUtils.log_step("第2.5步：生成代码", "开始为子系统生成代码实现")
         self._notify_progress("代码生成", 0, "开始为子系统生成代码...")
         
         try:
-            # 获取代码生成配置
-            code_config = self.config.get('step2_5_code_generation', {})
             parallel_enabled = code_config.get('parallel_processing', True)
             max_workers = code_config.get('max_workers', 3)
             
@@ -723,14 +733,24 @@ class PromptSplitPipeline:
             if step2_result.get('mermaid_content'):
                 self.save_file('output_step2_mermaid.txt', step2_result['mermaid_content'])
         
-        # 第2.5步：生成代码（新增步骤）
-        step2_5_result = self.step2_5_generate_code(step2_result.get('subprompts', {}))
-        if "error" in step2_5_result:
-            LogUtils.log_warning(f"代码生成失败，但继续执行后续步骤: {step2_5_result['error']}")
-            step2_5_result = {"error": step2_5_result["error"], "results": []}
+        # 第2.5步：生成代码（新增步骤，可配置禁用）
+        code_generation_enabled = self.config.get('step2_5_code_generation', {}).get('enabled', True)
         
-        if save_intermediate:
-            self.save_json('output_step2_5_code.json', step2_5_result)
+        if code_generation_enabled:
+            step2_5_result = self.step2_5_generate_code(step2_result.get('subprompts', {}))
+            if "error" in step2_5_result:
+                LogUtils.log_warning(f"代码生成失败，但继续执行后续步骤: {step2_5_result['error']}")
+                step2_5_result = {"error": step2_5_result["error"], "results": []}
+            
+            if save_intermediate:
+                self.save_json('output_step2_5_code.json', step2_5_result)
+        else:
+            LogUtils.log_info("代码生成步骤已禁用，跳过...")
+            step2_5_result = {
+                "summary": {"total_count": 0, "implementable_count": 0, "successful_count": 0, "failed_count": 0},
+                "results": [],
+                "disabled": True
+            }
         
         # 第三步：转换为CNLP（跳过已生成代码的子系统）
         step3_result = self.step3_convert_to_cnlp(step2_result, step2_5_result)
