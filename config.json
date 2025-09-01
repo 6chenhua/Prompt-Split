@@ -75,9 +75,10 @@
   "step2_5_code_generation": {
     "enabled": true,
     "parallel_processing": true,
-    "max_workers": 3,
+    "max_workers": 5,
     "test_case_count": 5,
-    "timeout_per_task": 60
+    "timeout_per_task": 60,
+    "generate_mermaid": true
   },
   "step3_cnlp": {
     "batch_size": 5,

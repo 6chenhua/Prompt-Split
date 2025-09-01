@@ -108,6 +108,66 @@ st.markdown("""
     font-size: 0.9rem;
     opacity: 0.9;
 }
+
+/* Mermaid流程图样式 */
+.mermaid-container {
+    background: white;
+    border-radius: 12px;
+    padding: 2rem;
+    border: 2px solid #e3f2fd;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    margin: 1rem 0;
+}
+
+.subsystem-overview {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin: 1rem 0;
+}
+
+.subsystem-type-card {
+    background: white;
+    border-radius: 8px;
+    padding: 1rem;
+    border-left: 4px solid;
+    margin: 0.5rem 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.subsystem-type-card.code {
+    border-left-color: #01579b;
+    background: linear-gradient(135deg, #e1f5fe 0%, #ffffff 100%);
+}
+
+.subsystem-type-card.cnlp {
+    border-left-color: #4a148c;
+    background: linear-gradient(135deg, #f3e5f5 0%, #ffffff 100%);
+}
+
+.subsystem-type-card.hybrid {
+    border-left-color: #1b5e20;
+    background: linear-gradient(135deg, #e8f5e8 0%, #ffffff 100%);
+}
+
+.flowchart-legend {
+    background: #f0f7ff;
+    border: 1px solid #b3d9ff;
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    margin: 0.5rem 0;
+}
+
+.legend-symbol {
+    margin-right: 0.5rem;
+    font-weight: bold;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -918,7 +978,7 @@ def render_results_section(result_data: Dict[str, Any]):
         """, unsafe_allow_html=True)
     
     # 结果选项卡
-    tab1, tab2, tab3, tab4 = st.tabs(["🔤 提取变量", "🧩 子系统拆分", "📝 CNLP结果", "🔗 协作关系"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔤 提取变量", "🧩 子系统拆分", "📝 CNLP结果", "🔗 协作关系", "🎨 系统流程图"])
     
     with tab1:
         render_variables_tab(step1_data)
@@ -931,6 +991,9 @@ def render_results_section(result_data: Dict[str, Any]):
     
     with tab4:
         render_collaboration_tab(step2_data)
+    
+    with tab5:
+        render_flowchart_tab(result_data)
 
 
 def render_variables_tab(step1_data: Dict[str, Any]):
@@ -1010,9 +1073,224 @@ def render_collaboration_tab(step2_data: Dict[str, Any]):
         
         st.markdown(collaboration_text)
         
-        st.info("💡 后续版本将支持交互式Mermaid流程图渲染")
+        st.info("💡 系统流程图已在专门的「系统流程图」选项卡中提供")
     else:
         st.warning("⚠️ 无协作关系数据")
+
+
+def render_flowchart_tab(result_data: Dict[str, Any]):
+    """渲染系统流程图选项卡"""
+    
+    # 检查是否有代码生成结果（包含mermaid图表）
+    step2_5_result = result_data.get("step2_5_result", {})
+    
+    if "mermaid_diagram" in step2_5_result:
+        mermaid_code = step2_5_result["mermaid_diagram"]
+        
+        st.markdown("""
+        <div class="mermaid-container">
+            <h3 style="margin-top: 0; color: #1f77b4;">🎨 系统架构流程图</h3>
+            <p style="color: #666; margin-bottom: 2rem;">以下流程图展示了各子系统之间的协作关系和数据流向</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 显示流程图图例
+        render_flowchart_legend()
+        
+        # 显示mermaid流程图
+        st.markdown("### 📊 流程图")
+        
+        # 尝试多种方式渲染mermaid图表
+        try:
+            # 方法1: 使用streamlit-mermaid组件 (如果安装的话)
+            try:
+                import streamlit_mermaid as stm
+                stm.st_mermaid(mermaid_code, height=500)
+            except ImportError:
+                # 方法2: 使用HTML iframe嵌入在线mermaid编辑器
+                import urllib.parse
+                encoded_mermaid = urllib.parse.quote(mermaid_code)
+                mermaid_url = f"https://mermaid.live/edit#{encoded_mermaid}"
+                
+                st.markdown("**在线Mermaid编辑器:**")
+                st.markdown(f'<iframe src="{mermaid_url}" width="100%" height="500" style="border: 1px solid #ddd; border-radius: 5px;"></iframe>', unsafe_allow_html=True)
+                
+                st.markdown("**或者复制下面的代码到 [Mermaid Live Editor](https://mermaid.live/) 查看图表:**")
+                st.code(mermaid_code, language='mermaid')
+                
+        except Exception as e:
+            # 备用方法: 显示代码和链接
+            st.warning(f"图表渲染遇到问题，请使用下方代码在 [Mermaid Live Editor](https://mermaid.live/) 查看图表")
+            st.code(mermaid_code, language='mermaid')
+        
+        # 下载按钮
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="📥 下载流程图代码",
+                data=f"```mermaid\n{mermaid_code}\n```",
+                file_name="system_flowchart.md",
+                mime="text/markdown",
+                help="下载Mermaid格式的流程图代码"
+            )
+        
+        with col2:
+            # 生成完整的markdown文档
+            markdown_content = f"""# 系统流程图
+
+## 系统架构
+以下流程图展示了各子系统之间的协作关系和数据流向：
+
+```mermaid
+{mermaid_code}
+```
+
+## 图例说明
+- 🔷 **矩形节点**: 代码实现的子系统
+- 🔵 **圆角矩形节点**: CNLP实现的子系统  
+- 🔶 **菱形节点**: 混合实现的子系统
+
+## 生成时间
+{time.strftime('%Y-%m-%d %H:%M:%S')}
+"""
+            st.download_button(
+                label="📄 下载完整文档",
+                data=markdown_content,
+                file_name="system_architecture_doc.md",
+                mime="text/markdown",
+                help="下载包含说明的完整文档"
+            )
+        
+        # 显示子系统概览
+        render_subsystem_overview(result_data)
+        
+    else:
+        st.info("🔄 流程图生成中...")
+        st.markdown("""
+        **流程图生成说明**：
+        - 流程图将在代码生成步骤完成后自动生成
+        - 如果您看到此消息，可能是因为：
+          1. 代码生成步骤尚未完成
+          2. 代码生成步骤中未启用流程图生成
+          3. 流程图生成过程中出现了问题
+        
+        请等待处理完成或重新运行处理流程。
+        """)
+
+
+def render_flowchart_legend():
+    """渲染流程图图例"""
+    st.markdown("""
+    <div class="flowchart-legend">
+        <h4 style="margin-top: 0; color: #333;">📖 图例说明</h4>
+        <div class="legend-item">
+            <span class="legend-symbol" style="color: #01579b;">🔷 [子系统-CODE]</span>
+            <span>代码实现的子系统</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-symbol" style="color: #4a148c;">🔵 (子系统-CNLP)</span>
+            <span>CNLP实现的子系统</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-symbol" style="color: #333;">➡️ --></span>
+            <span>数据流向和调用关系</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_subsystem_overview(result_data: Dict[str, Any]):
+    """渲染子系统概览，区分代码实现和CNLP实现"""
+    step2_5_result = result_data.get("step2_5_result", {})
+    
+    if "results" in step2_5_result:
+        results = step2_5_result["results"]
+        
+        st.markdown("---")
+        st.markdown("### 📋 子系统实现概览")
+        
+        # 分类统计 (只区分CODE和CNLP，无混合实现)
+        code_systems = []
+        cnlp_systems = []
+        error_systems = []
+        
+        for result in results:
+            name = result.get("subsystem", result.get("name", "未命名子系统"))
+            status = result.get("status", "unknown")
+            
+            if status == "can_implement" and result.get("code"):
+                # 成功生成代码的子系统
+                code_systems.append(name)
+            elif status in ["cannot_implement", "can_implement"]:
+                # 不能实现代码或没有生成代码的子系统，归为CNLP
+                cnlp_systems.append(name)
+            elif status == "error":
+                error_systems.append(name)
+            else:
+                # 默认归为CNLP实现
+                cnlp_systems.append(name)
+        
+        # 如果没有results数据，尝试从原始子系统数据获取
+        if not results:
+            step2_data = result_data.get("step2_result", {})
+            subsystems_data = step2_data.get("subsystems", {})
+            subsystems = subsystems_data.get("subsystems", [])
+            
+            for subsystem in subsystems:
+                name = subsystem.get("name", "未命名子系统")
+                # 根据actual_implementation字段判断
+                impl_type = subsystem.get("actual_implementation", "CNLP")
+                if impl_type == "CODE":
+                    code_systems.append(name)
+                else:
+                    cnlp_systems.append(name)
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("""
+            <div class="subsystem-type-card code">
+                <h4 style="margin: 0; color: #01579b;">💻 代码实现</h4>
+                <p style="margin: 0.5rem 0 0 0; color: #666;">直接生成可执行代码</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if code_systems:
+                for system in code_systems:
+                    st.success(f"✅ {system}")
+            else:
+                st.info("暂无代码实现的子系统")
+        
+        with col2:
+            st.markdown("""
+            <div class="subsystem-type-card cnlp">
+                <h4 style="margin: 0; color: #4a148c;">🧠 CNLP实现</h4>
+                <p style="margin: 0.5rem 0 0 0; color: #666;">转换为自然语言处理逻辑</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if cnlp_systems:
+                for system in cnlp_systems:
+                    st.info(f"🔵 {system}")
+            else:
+                st.info("暂无CNLP实现的子系统")
+        
+        with col3:
+            st.markdown("""
+            <div class="subsystem-type-card" style="border-left-color: #dc3545; background: linear-gradient(135deg, #f8d7da 0%, #ffffff 100%);">
+                <h4 style="margin: 0; color: #dc3545;">❌ 处理错误</h4>
+                <p style="margin: 0.5rem 0 0 0; color: #666;">处理过程中出现错误</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if error_systems:
+                for system in error_systems:
+                    st.error(f"❌ {system}")
+            else:
+                st.success("✅ 所有子系统处理正常")
+    
+    else:
+        st.warning("⚠️ 暂无子系统处理结果数据")
 
 
 def process_text_async(input_text: str, chunk_size: int, max_workers: int, tracker: ProgressTracker):
@@ -1083,7 +1361,7 @@ def process_text_async(input_text: str, chunk_size: int, max_workers: int, track
         code_generation_enabled = config.get('step2_5_code_generation', {}).get('enabled', True)
         
         if code_generation_enabled:
-            step2_5_result = pipeline.step2_5_generate_code(step2_result.get("subprompts", {}))
+            step2_5_result = pipeline.step2_5_generate_code(step2_result)
             if "error" in step2_5_result:
                 # 代码生成失败不中断整个流程，只记录警告
                 LogUtils.log_warning(f"代码生成失败，但继续执行后续步骤: {step2_5_result['error']}")

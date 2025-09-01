@@ -52,7 +52,7 @@ def test_code_generation_with_sample():
         
         # 第2.5步：代码生成（新功能）
         LogUtils.log_info("步骤2.5: 代码生成")
-        step2_5_result = pipeline.step2_5_generate_code(step2_result.get('subprompts', {}))
+        step2_5_result = pipeline.step2_5_generate_code(step2_result)
         
         if "error" in step2_5_result and step2_5_result.get("results") is None:
             LogUtils.log_error(f"代码生成完全失败: {step2_5_result['error']}")

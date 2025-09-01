@@ -241,56 +241,132 @@ class PromptSplitPipeline:
 
     def _extract_json_strategy_1(self, response: str) -> Dict[str, Any]:
         """策略1: 查找完整的JSON块（从第一个{到匹配的}）"""
+        LogUtils.log_info("     🔍 查找第一个 '{' 字符...")
         start_idx = response.find('{')
         if start_idx == -1:
+            LogUtils.log_info("     ❌ 未找到 '{' 字符")
             return {}
         
+        LogUtils.log_info(f"     ✅ 找到起始位置: {start_idx}")
+        LogUtils.log_info(f"     📖 起始位置周围文本: ...{response[max(0, start_idx-20):start_idx+50]}...")
+        
         brace_count = 0
+        end_idx = -1
         for i, char in enumerate(response[start_idx:], start_idx):
             if char == '{':
                 brace_count += 1
             elif char == '}':
                 brace_count -= 1
                 if brace_count == 0:
-                    json_str = response[start_idx:i+1]
-                    return json.loads(json_str)
+                    end_idx = i
+                    break
         
-        return {}
+        if end_idx == -1:
+            LogUtils.log_info(f"     ❌ 未找到匹配的 '}}' 字符，最终括号计数: {brace_count}")
+            return {}
+        
+        json_str = response[start_idx:end_idx+1]
+        LogUtils.log_info(f"     ✅ 找到完整JSON块，长度: {len(json_str)} 字符")
+        LogUtils.log_info(f"     📖 JSON开头: {json_str[:100]}...")
+        LogUtils.log_info(f"     📖 JSON结尾: ...{json_str[-100:]}")
+        
+        try:
+            result = json.loads(json_str)
+            LogUtils.log_info(f"     ✅ JSON解析成功，类型: {type(result)}")
+            return result
+        except json.JSONDecodeError as e:
+            LogUtils.log_info(f"     ❌ JSON解析失败: {e}")
+            raise
 
     def _extract_json_strategy_2(self, response: str) -> Dict[str, Any]:
         """策略2: 提取```json代码块中的JSON"""
         import re
         
+        LogUtils.log_info("     🔍 查找 ```json 代码块...")
+        
         # 查找 ```json 代码块
         json_block_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
         match = re.search(json_block_pattern, response, re.DOTALL | re.IGNORECASE)
+        
         if match:
-            return json.loads(match.group(1))
+            json_str = match.group(1)
+            LogUtils.log_info(f"     ✅ 找到代码块，JSON长度: {len(json_str)} 字符")
+            LogUtils.log_info(f"     📍 代码块位置: {match.start()}-{match.end()}")
+            LogUtils.log_info(f"     📖 JSON内容开头: {json_str[:100]}...")
+            
+            try:
+                result = json.loads(json_str)
+                LogUtils.log_info(f"     ✅ JSON解析成功")
+                return result
+            except json.JSONDecodeError as e:
+                LogUtils.log_info(f"     ❌ JSON解析失败: {e}")
+                raise
+        else:
+            LogUtils.log_info("     ❌ 未找到 ```json 代码块")
+            # 尝试查找没有json标识的代码块
+            generic_pattern = r'```\s*(\{.*?\})\s*```'
+            generic_match = re.search(generic_pattern, response, re.DOTALL)
+            if generic_match:
+                LogUtils.log_info("     🔄 尝试通用代码块模式...")
+                json_str = generic_match.group(1)
+                LogUtils.log_info(f"     ✅ 找到通用代码块，JSON长度: {len(json_str)} 字符")
+                try:
+                    result = json.loads(json_str)
+                    LogUtils.log_info(f"     ✅ 通用代码块JSON解析成功")
+                    return result
+                except json.JSONDecodeError as e:
+                    LogUtils.log_info(f"     ❌ 通用代码块JSON解析失败: {e}")
+                    raise
+            else:
+                LogUtils.log_info("     ❌ 也未找到通用代码块")
         
         return {}
 
     def _extract_json_strategy_3(self, response: str) -> Dict[str, Any]:
         """策略3: 逐行搜索，查找以{开头的行"""
+        LogUtils.log_info("     🔍 逐行搜索JSON结构...")
+        
         lines = response.split('\n')
         json_lines = []
         in_json = False
         brace_count = 0
+        start_line_num = -1
         
-        for line in lines:
+        LogUtils.log_info(f"     📊 总行数: {len(lines)}")
+        
+        for line_num, line in enumerate(lines):
             stripped = line.strip()
             if not in_json and stripped.startswith('{'):
+                LogUtils.log_info(f"     ✅ 在第 {line_num+1} 行找到JSON起始: {stripped[:50]}...")
                 in_json = True
                 json_lines = [line]
                 brace_count = line.count('{') - line.count('}')
+                start_line_num = line_num + 1
+                LogUtils.log_info(f"     📊 初始括号计数: {brace_count}")
             elif in_json:
                 json_lines.append(line)
-                brace_count += line.count('{') - line.count('}')
+                line_braces = line.count('{') - line.count('}')
+                brace_count += line_braces
+                LogUtils.log_info(f"     📊 第 {line_num+1} 行，括号变化: {line_braces}，总计数: {brace_count}")
                 if brace_count <= 0:
+                    LogUtils.log_info(f"     ✅ 在第 {line_num+1} 行找到JSON结束")
                     break
         
         if json_lines:
             json_str = '\n'.join(json_lines)
-            return json.loads(json_str)
+            LogUtils.log_info(f"     ✅ 提取到JSON块，从第 {start_line_num} 行开始，共 {len(json_lines)} 行")
+            LogUtils.log_info(f"     📖 JSON开头: {json_str[:100]}...")
+            LogUtils.log_info(f"     📖 JSON结尾: ...{json_str[-100:]}")
+            
+            try:
+                result = json.loads(json_str)
+                LogUtils.log_info(f"     ✅ JSON解析成功")
+                return result
+            except json.JSONDecodeError as e:
+                LogUtils.log_info(f"     ❌ JSON解析失败: {e}")
+                raise
+        else:
+            LogUtils.log_info("     ❌ 未找到以 '{' 开头的行")
         
         return {}
 
@@ -298,9 +374,31 @@ class PromptSplitPipeline:
         """策略4: 使用公共工具的JSON提取"""
         from common_utils import JSONProcessor
         
+        LogUtils.log_info("     🔍 使用公共工具JSONProcessor...")
+        
         json_str = JSONProcessor.extract_json_string(response)
+        LogUtils.log_info(f"     📊 提取结果长度: {len(json_str)} 字符")
+        LogUtils.log_info(f"     📊 原始响应长度: {len(response)} 字符")
+        
         if json_str and json_str != response:  # 确保提取到了JSON
-            return json.loads(json_str)
+            LogUtils.log_info("     ✅ 成功提取到JSON字符串")
+            LogUtils.log_info(f"     📖 提取的JSON开头: {json_str[:100]}...")
+            LogUtils.log_info(f"     📖 提取的JSON结尾: ...{json_str[-100:]}")
+            
+            try:
+                result = json.loads(json_str)
+                LogUtils.log_info(f"     ✅ JSON解析成功")
+                return result
+            except json.JSONDecodeError as e:
+                LogUtils.log_info(f"     ❌ JSON解析失败: {e}")
+                raise
+        else:
+            if not json_str:
+                LogUtils.log_info("     ❌ JSONProcessor返回空结果")
+            elif json_str == response:
+                LogUtils.log_info("     ❌ JSONProcessor返回原始响应，未找到JSON")
+            else:
+                LogUtils.log_info("     ❌ JSONProcessor提取异常")
         
         return {}
 
@@ -318,34 +416,245 @@ class PromptSplitPipeline:
             LogUtils.log_warning("LLM响应为空")
             return {}
         
-        LogUtils.log_info("开始提取子提示词JSON数据...")
-        LogUtils.log_info(f"原始响应长度: {len(response)} 字符")
+        LogUtils.log_info("🔍 开始提取子提示词JSON数据...")
+        LogUtils.log_info(f"   原始响应长度: {len(response)} 字符")
         
         # 复用子系统的提取策略，但检查不同的字段
         strategies = [
-            self._extract_json_strategy_1,
-            self._extract_json_strategy_2,
-            self._extract_json_strategy_3,
-            self._extract_json_strategy_4
+            ("策略1: 完整JSON块匹配", self._extract_json_strategy_1),
+            ("策略2: 代码块JSON提取", self._extract_json_strategy_2),
+            ("策略3: 逐行JSON搜索", self._extract_json_strategy_3),
+            ("策略4: 公共工具提取", self._extract_json_strategy_4),
+            ("策略5: JSON修复并重试", self._extract_json_strategy_5_fix_and_retry)
         ]
         
-        for i, strategy in enumerate(strategies, 1):
+        for i, (strategy_name, strategy_func) in enumerate(strategies, 1):
+            LogUtils.log_info(f"🔧 尝试 {strategy_name}...")
             try:
-                result = strategy(response)
-                # 检查是否包含子提示词相关字段
-                if result and ("subprompts" in result or "sub_prompts" in result):
-                    LogUtils.log_success(f"策略 {i} 成功提取子提示词JSON数据")
-                    # 统一字段名
-                    if "sub_prompts" in result and "subprompts" not in result:
-                        result["subprompts"] = result.pop("sub_prompts")
-                    return result
-                elif result:
-                    LogUtils.log_warning(f"策略 {i} 提取到JSON但无子提示词字段")
+                result = strategy_func(response)
+                
+                LogUtils.log_info(f"   策略 {i} 执行结果:")
+                LogUtils.log_info(f"     - 返回类型: {type(result)}")
+                
+                if result:
+                    LogUtils.log_info(f"     - 返回内容长度: {len(str(result))} 字符")
+                    LogUtils.log_info(f"     - 顶级键: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                    
+                    # 检查是否包含子提示词相关字段
+                    target_fields = ["subprompts", "sub_prompts", "prompts", "subPrompts"]
+                    found_fields = []
+                    for field in target_fields:
+                        if field in result:
+                            field_value = result[field]
+                            found_fields.append(f"{field}({type(field_value).__name__}, {len(field_value) if hasattr(field_value, '__len__') else 'N/A'})")
+                    
+                    if found_fields:
+                        LogUtils.log_success(f"✅ 策略 {i} 成功！找到字段: {', '.join(found_fields)}")
+                        
+                        # 统一字段名
+                        if "sub_prompts" in result and "subprompts" not in result:
+                            result["subprompts"] = result.pop("sub_prompts")
+                            LogUtils.log_info("     - 已将 'sub_prompts' 重命名为 'subprompts'")
+                        
+                        return result
+                    else:
+                        LogUtils.log_warning(f"⚠️ 策略 {i} 提取到JSON但无子提示词字段")
+                        LogUtils.log_info(f"     - 找到的字段: {list(result.keys())}")
+                        
+                        # 显示JSON内容的片段（如果不太长）
+                        if len(str(result)) < 1000:
+                            LogUtils.log_info(f"     - JSON内容预览: {result}")
+                        else:
+                            LogUtils.log_info(f"     - JSON内容过长，仅显示前500字符: {str(result)[:500]}...")
+                else:
+                    LogUtils.log_info("     - 返回空结果")
+                    
+            except json.JSONDecodeError as e:
+                LogUtils.log_warning(f"❌ 策略 {i} JSON解析失败: {e}")
+                LogUtils.log_info(f"     - 错误位置: 行 {getattr(e, 'lineno', '未知')}，列 {getattr(e, 'colno', '未知')}")
+                LogUtils.log_info(f"     - 错误字符位置: {getattr(e, 'pos', '未知')}")
+                
+                # 尝试显示错误位置周围的内容
+                if hasattr(e, 'pos') and e.pos is not None:
+                    start = max(0, e.pos - 100)
+                    end = min(len(response), e.pos + 100)
+                    error_context = response[start:end]
+                    LogUtils.log_info(f"     - 错误位置周围内容: ...{error_context}...")
+                    
             except Exception as e:
-                LogUtils.log_warning(f"策略 {i} 失败: {e}")
+                LogUtils.log_warning(f"❌ 策略 {i} 执行失败: {type(e).__name__}: {e}")
+                import traceback
+                LogUtils.log_info(f"     - 详细错误: {traceback.format_exc()}")
         
-        LogUtils.log_error("所有子提示词JSON提取策略均失败")
+        LogUtils.log_error("❌ 所有子提示词JSON提取策略均失败")
+        LogUtils.log_info("🔍 提供额外调试信息:")
+        
+        # 提供一些调试提示
+        if '{' not in response:
+            LogUtils.log_info("   - 响应中没有找到 '{' 字符，可能不包含JSON")
+        elif '}' not in response:
+            LogUtils.log_info("   - 响应中没有找到 '}' 字符，JSON可能不完整")
+        else:
+            first_brace = response.find('{')
+            last_brace = response.rfind('}')
+            LogUtils.log_info(f"   - 第一个 '{{' 位置: {first_brace}")
+            LogUtils.log_info(f"   - 最后一个 '}}' 位置: {last_brace}")
+            
+            if first_brace != -1 and last_brace != -1:
+                potential_json = response[first_brace:last_brace+1]
+                LogUtils.log_info(f"   - 潜在JSON长度: {len(potential_json)} 字符")
+                LogUtils.log_info(f"   - 潜在JSON开头: {potential_json[:200]}...")
+                
         return {}
+
+    def _extract_json_strategy_5_fix_and_retry(self, response: str) -> Dict[str, Any]:
+        """策略5: JSON修复并重试"""
+        LogUtils.log_info("     🔧 尝试修复JSON格式问题...")
+        
+        # 先尝试找到JSON部分
+        start_idx = response.find('{')
+        if start_idx == -1:
+            LogUtils.log_info("     ❌ 未找到JSON起始标记")
+            return {}
+        
+        # 找到匹配的结束位置
+        brace_count = 0
+        end_idx = -1
+        for i, char in enumerate(response[start_idx:], start_idx):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_idx = i
+                    break
+        
+        if end_idx == -1:
+            LogUtils.log_info("     ❌ 未找到JSON结束标记")
+            return {}
+        
+        json_str = response[start_idx:end_idx+1]
+        LogUtils.log_info(f"     📖 提取到原始JSON，长度: {len(json_str)} 字符")
+        
+        # 应用多种修复策略
+        fixed_json = self._apply_json_fixes(json_str)
+        
+        if fixed_json != json_str:
+            LogUtils.log_info(f"     🔧 JSON已修复，修复后长度: {len(fixed_json)} 字符")
+            LogUtils.log_info(f"     📖 修复后JSON开头: {fixed_json[:200]}...")
+        else:
+            LogUtils.log_info("     ℹ️ JSON无需修复")
+        
+        try:
+            result = json.loads(fixed_json)
+            LogUtils.log_info(f"     ✅ 修复后JSON解析成功")
+            return result
+        except json.JSONDecodeError as e:
+            LogUtils.log_info(f"     ❌ 修复后仍然解析失败: {e}")
+            raise
+
+    def _apply_json_fixes(self, json_str: str) -> str:
+        """应用多种JSON修复策略"""
+        LogUtils.log_info("     🛠️ 应用JSON修复策略...")
+        
+        fixed = json_str
+        fixes_applied = []
+        
+        import re
+        
+        # 修复1: 最强力的字符串字段修复
+        # 使用更强的策略来处理所有字符串值中的引号问题
+        def fix_all_string_fields(text):
+            """修复所有JSON字符串字段中的未转义引号"""
+            # 查找所有的字符串值（在冒号后面的引号内容）
+            pattern = r'("(?:prompt|name|inputs|outputs|collaboration|[^"]+)":\s*")([^"}]*(?:[^"\\]"[^"}]*)*)"'
+            
+            def fix_field_value(match):
+                field_start = match.group(1)  # "field": "
+                content = match.group(2)      # 字段内容（可能包含未转义引号）
+                
+                LogUtils.log_info(f"     🔧 修复字段内容，原长度: {len(content)}")
+                
+                # 保护已经转义的引号
+                content = content.replace('\\"', '###ALREADY_ESCAPED###')
+                
+                # 转义所有未转义的引号
+                content = content.replace('"', '\\"')
+                
+                # 恢复之前已转义的引号
+                content = content.replace('###ALREADY_ESCAPED###', '\\"')
+                
+                LogUtils.log_info(f"     ✅ 字段修复完成，新长度: {len(content)}")
+                
+                return field_start + content + '"'
+            
+            # 使用多次匹配来确保所有字段都被处理
+            attempts = 0
+            while attempts < 5:  # 最多尝试5次
+                new_text = re.sub(pattern, fix_field_value, text, flags=re.DOTALL)
+                if new_text == text:
+                    break  # 没有更多修复可做
+                text = new_text
+                attempts += 1
+                LogUtils.log_info(f"     🔄 修复轮次 {attempts}")
+            
+            return text
+        
+        original_fixed = fixed
+        fixed = fix_all_string_fields(fixed)
+        if fixed != original_fixed:
+            fixes_applied.append("强力字段修复")
+        
+        # 修复2: 特殊中文标点修复
+        chinese_patterns = [
+            ('"，"', '\\"，\\"'),    # 中文逗号
+            ('"。"', '\\"。\\"'),    # 中文句号
+            ('"："', '\\"：\\"'),    # 中文冒号
+            ('"（"', '\\"（\\"'),    # 中文左括号
+            ('"）"', '\\"）\\"'),    # 中文右括号
+        ]
+        
+        for pattern, replacement in chinese_patterns:
+            if pattern in fixed:
+                fixed = fixed.replace(pattern, replacement)
+                fixes_applied.append(f"修复中文标点{pattern[1]}")
+                LogUtils.log_info(f"     🔧 修复中文标点: {pattern}")
+        
+        # 修复3: 清理控制字符
+        import unicodedata
+        cleaned = ''.join(
+            char for char in fixed 
+            if unicodedata.category(char)[0] != 'C' 
+            or char in ['\n', '\r', '\t', ' ']
+        )
+        if len(cleaned) != len(fixed):
+            fixed = cleaned
+            fixes_applied.append("清理控制字符")
+        
+        # 修复4: 移除多余的逗号
+        fixed = re.sub(r',(\s*[}\]])', r'\1', fixed)
+        
+        # 修复5: 最后的检查和平衡引号
+        # 确保所有的字符串都正确闭合
+        try:
+            # 尝试快速验证是否还有明显的语法错误
+            brace_count = fixed.count('{') - fixed.count('}')
+            bracket_count = fixed.count('[') - fixed.count(']')
+            
+            if brace_count != 0:
+                LogUtils.log_info(f"     ⚠️ 大括号不平衡: {brace_count}")
+            if bracket_count != 0:
+                LogUtils.log_info(f"     ⚠️ 方括号不平衡: {bracket_count}")
+                
+        except Exception as e:
+            LogUtils.log_info(f"     ⚠️ 语法检查异常: {e}")
+        
+        if fixes_applied:
+            LogUtils.log_info(f"     ✅ 应用的修复策略: {', '.join(fixes_applied)}")
+        else:
+            LogUtils.log_info("     ℹ️ 未发现需要修复的问题")
+        
+        return fixed
 
     def _extract_subprompts_from_data(self, data: Any) -> list:
         """
@@ -407,23 +716,76 @@ class PromptSplitPipeline:
             # 准备消息内容
             user_content = f"<<<初始提示词：\n{original_text}\n用户初始提示词结束>>>\n\n{json.dumps(subsystems_data, ensure_ascii=False)}"
             
+            LogUtils.log_info("🔍 准备生成子提示词的输入内容:")
+            LogUtils.log_info(f"   - 原始文本长度: {len(original_text)} 字符")
+            LogUtils.log_info(f"   - 子系统数量: {len(subsystems_data.get('subsystems', []))}")
+            LogUtils.log_info(f"   - 用户内容长度: {len(user_content)} 字符")
+            LogUtils.log_info(f"   - 用户内容预览: {user_content[:200]}...")
+            
             # 创建包含子系统信息的消息列表
             messages = sub_prompt_messages.copy()
             messages.append({"role": "user", "content": user_content})
             
+            LogUtils.log_info("🚀 调用LLM生成子提示词...")
+            
             # 调用LLM生成子提示词
             response = llm_client.call(messages)
             
+            LogUtils.log_info("📝 LLM响应详细信息:")
+            if response:
+                LogUtils.log_info(f"   - 响应长度: {len(response)} 字符")
+                LogUtils.log_info(f"   - 响应类型: {type(response)}")
+                LogUtils.log_info("   - 响应前500字符:")
+                LogUtils.log_info(f"     {response[:500]}")
+                LogUtils.log_info("   - 响应后500字符:")
+                LogUtils.log_info(f"     ...{response[-500:]}")
+                
+                # 分析响应中可能的JSON结构
+                json_start_count = response.count('{')
+                json_end_count = response.count('}')
+                array_start_count = response.count('[')
+                array_end_count = response.count(']')
+                
+                LogUtils.log_info("   - JSON结构分析:")
+                LogUtils.log_info(f"     大括号开始: {json_start_count}, 结束: {json_end_count}")
+                LogUtils.log_info(f"     方括号开始: {array_start_count}, 结束: {array_end_count}")
+                
+                # 查找关键词
+                key_words = ["subprompts", "sub_prompts", "prompts", "subPrompts"]
+                for word in key_words:
+                    count = response.count(word)
+                    if count > 0:
+                        LogUtils.log_info(f"     找到关键词 '{word}': {count} 次")
+                        # 显示关键词周围的文本
+                        import re
+                        matches = list(re.finditer(re.escape(word), response, re.IGNORECASE))
+                        for i, match in enumerate(matches[:3]):  # 最多显示3个匹配
+                            start = max(0, match.start() - 50)
+                            end = min(len(response), match.end() + 50)
+                            context = response[start:end].replace('\n', ' ')
+                            LogUtils.log_info(f"       匹配{i+1}: ...{context}...")
+            else:
+                LogUtils.log_error("❌ LLM返回空响应")
+                return {"subprompts": []}
+            
             # 改进的JSON提取逻辑（复用子系统的提取方法）
+            LogUtils.log_info("🔧 开始JSON提取过程...")
             subprompts_data = self._extract_subprompts_json(response)
             if subprompts_data and "subprompts" in subprompts_data:
+                LogUtils.log_success(f"✅ 成功提取子提示词数据，包含 {len(subprompts_data['subprompts'])} 个子提示词")
                 return subprompts_data
             else:
-                LogUtils.log_warning("未找到有效的子提示词JSON数据")
+                LogUtils.log_warning("⚠️ 未找到有效的子提示词JSON数据")
+                LogUtils.log_info("💾 完整响应内容（调试用）:")
+                LogUtils.log_info("=" * 60)
+                LogUtils.log_info(response)
+                LogUtils.log_info("=" * 60)
                 return {"subprompts": []}
                 
         except Exception as e:
-            LogUtils.log_error(f"子提示词生成失败: {e}")
+            LogUtils.log_error(f"❌ 子提示词生成失败: {e}")
+            import traceback
+            LogUtils.log_error(f"   错误详情: {traceback.format_exc()}")
             return {"subprompts": []}
     
     def step2_split_to_subprompts(self, text_with_vars: str) -> Dict[str, Any]:
@@ -494,9 +856,9 @@ class PromptSplitPipeline:
             LogUtils.log_error(error_msg)
             return {"error": error_msg}
     
-    def step2_5_generate_code(self, subprompts_data: Dict[str, Any]) -> Dict[str, Any]:
+    def step2_5_generate_code(self, step2_result: Dict[str, Any]) -> Dict[str, Any]:
         """
-        第2.5步：为子提示词生成代码（在第二步和第三步之间插入）
+        第2.5步：为子系统生成代码和流程图（在第二步和第三步之间插入）
         """
         # 获取代码生成配置
         code_config = self.config.get('step2_5_code_generation', {})
@@ -510,46 +872,110 @@ class PromptSplitPipeline:
                 "disabled": True
             }
         
-        LogUtils.log_step("第2.5步：生成代码", "开始为子系统生成代码实现")
-        self._notify_progress("代码生成", 0, "开始为子系统生成代码...")
+        LogUtils.log_step("第2.5步：生成代码", "开始为子系统生成代码实现和流程图")
+        self._notify_progress("代码生成", 0, "开始为子系统生成代码和流程图...")
         
         try:
             parallel_enabled = code_config.get('parallel_processing', True)
             max_workers = code_config.get('max_workers', 3)
+            mermaid_enabled = code_config.get('generate_mermaid', True)
             
-            LogUtils.log_info(f"代码生成配置: 并行处理={parallel_enabled}, 最大线程数={max_workers}")
+            LogUtils.log_info(f"代码生成配置: 并行处理={parallel_enabled}, 最大线程数={max_workers}, 生成流程图={mermaid_enabled}")
             
-            # 使用代码生成器处理子提示词
-            code_results = self.code_generator.batch_process_subprompts(
-                subprompts_data, 
-                parallel=parallel_enabled, 
-                max_workers=max_workers
-            )
+            # 从step2结果中提取数据
+            subsystems_data = step2_result.get("subsystems", {})
+            subprompts_data = step2_result.get("subprompts", {})
             
-            if "error" in code_results:
-                LogUtils.log_error(f"代码生成失败: {code_results['error']}")
-                return code_results
+            # 初始化结果
+            code_results = {
+                "summary": {"total_count": 0, "implementable_count": 0, "successful_count": 0, "failed_count": 0},
+                "results": []
+            }
             
-            # 获取统计信息
+            # 1. 代码生成部分（使用简化的方法）
+            if subsystems_data and subsystems_data.get("subsystems"):
+                LogUtils.log_info("发现子系统数据，但简化版本暂不支持子系统代码生成")
+                LogUtils.log_info("将所有子系统标记为CNLP实现")
+                
+                # 标记所有子系统为CNLP实现
+                subsystems = subsystems_data["subsystems"]
+                for subsystem in subsystems:
+                    subsystem["actual_implementation"] = "CNLP"
+                    if "cnlp" not in subsystem:
+                        subsystem["cnlp"] = f"需要通过自然语言处理实现：{subsystem.get('description', subsystem.get('name', ''))}"
+                
+                code_results["summary"]["total_count"] = len(subsystems)
+                
+                # 确保subsystems_data包含collaboration字段
+                if "collaboration" not in subsystems_data or not subsystems_data["collaboration"]:
+                    # 生成默认的协作关系描述
+                    subsystem_names = [s.get("name", f"子系统{i+1}") for i, s in enumerate(subsystems)]
+                    if len(subsystem_names) <= 1:
+                        default_collaboration = f"单个子系统 {subsystem_names[0] if subsystem_names else '未命名子系统'} 独立处理用户请求"
+                    else:
+                        default_collaboration = f"系统按顺序执行：{' → '.join(subsystem_names)}，每个子系统处理特定的业务逻辑"
+                    
+                    subsystems_data["collaboration"] = default_collaboration
+                    LogUtils.log_info(f"生成默认协作关系: {default_collaboration}")
+                
+            elif subprompts_data and subprompts_data.get("subprompts"):
+                LogUtils.log_info("使用子提示词数据进行代码生成")
+                # 使用简化的子提示词处理方法
+                code_results = self.code_generator.batch_process_subprompts(
+                    subprompts_data, 
+                    parallel=parallel_enabled, 
+                    max_workers=max_workers
+                )
+            else:
+                LogUtils.log_warning("没有找到可处理的子系统或子提示词数据")
+            
+            # 2. 独立生成mermaid流程图（无论是否有代码生成）
+            mermaid_code = None
+            if mermaid_enabled:
+                try:
+                    from mermaid_generator import MermaidGenerator
+                    mermaid_generator = MermaidGenerator()
+                    
+                    # 确定使用哪种数据生成流程图
+                    if subsystems_data and subsystems_data.get("subsystems"):
+                        LogUtils.log_info("基于子系统数据生成系统流程图...")
+                        mermaid_code = mermaid_generator.generate_mermaid_diagram(subsystems_data, quiet=False)
+                    elif subprompts_data and subprompts_data.get("subprompts"):
+                        LogUtils.log_info("基于子提示词数据生成系统流程图...")
+                        # 将子提示词数据转换为subsystems格式
+                        converted_data = self._convert_subprompts_to_subsystems_format(subprompts_data, code_results)
+                        mermaid_code = mermaid_generator.generate_mermaid_diagram(converted_data, quiet=False)
+                    
+                    if mermaid_code:
+                        LogUtils.log_success("系统流程图生成完成")
+                        code_results["mermaid_diagram"] = mermaid_code
+                    else:
+                        LogUtils.log_warning("系统流程图生成失败")
+                        
+                except Exception as e:
+                    LogUtils.log_error(f"系统流程图生成异常: {e}")
+            
+            # 3. 统计和报告
             summary = code_results.get("summary", {})
-            total_count = summary.get("total_subprompts", 0)
+            total_count = summary.get("total_count", summary.get("total_subprompts", 0))
             implementable_count = summary.get("implementable_count", 0)
             successful_count = summary.get("successful_count", 0)
             
-            LogUtils.log_success(f"代码生成完成")
-            LogUtils.log_info(f"   - 总子系统数: {total_count}")
+            LogUtils.log_success(f"代码生成和流程图生成完成")
+            LogUtils.log_info(f"   - 总数量: {total_count}")
             LogUtils.log_info(f"   - 可实现数: {implementable_count}")
             LogUtils.log_info(f"   - 成功生成代码数: {successful_count}")
+            LogUtils.log_info(f"   - 流程图生成: {'✅成功' if mermaid_code else '❌失败'}")
             
-            # 保存代码生成结果
+            # 4. 保存结果
             try:
                 self.code_generator.save_code_generation_results(code_results)
                 LogUtils.log_success("代码生成结果已保存")
             except Exception as e:
                 LogUtils.log_warning(f"保存代码生成结果失败: {e}")
             
-            # 立即传递代码生成结果
-            self._notify_progress("代码生成", 100, f"成功生成 {successful_count}/{total_count} 个子系统的代码", code_results)
+            # 5. 通知进度完成
+            self._notify_progress("代码生成", 100, f"完成代码生成和流程图生成", code_results)
             
             return code_results
             
@@ -557,6 +983,70 @@ class PromptSplitPipeline:
             error_msg = f"代码生成流程失败: {e}"
             LogUtils.log_error(error_msg)
             return {"error": error_msg}
+    
+    def _convert_subprompts_to_subsystems_format(self, subprompts_data: Dict[str, Any], code_results: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        将子提示词数据转换为subsystems格式，用于mermaid流程图生成
+        
+        Args:
+            subprompts_data: 子提示词数据
+            code_results: 代码生成结果
+            
+        Returns:
+            转换后的subsystems格式数据
+        """
+        try:
+            subprompts = subprompts_data.get("subprompts", [])
+            collaboration = subprompts_data.get("collaboration", "")
+            
+            # 从代码生成结果中获取实现状态
+            implementation_map = {}
+            for result in code_results.get("results", []):
+                name = result.get("name", "")
+                has_code = bool(result.get("code"))
+                implementation_map[name] = "CODE" if has_code else "CNLP"
+            
+            # 转换为subsystems格式
+            subsystems = []
+            for subprompt in subprompts:
+                name = subprompt.get("name", "")
+                implementation = implementation_map.get(name, "CNLP")
+                
+                subsystem = {
+                    "name": name,
+                    "description": subprompt.get("prompt", "")[:100] + "...",
+                    "actual_implementation": implementation
+                }
+                
+                if implementation == "CODE":
+                    # 从代码生成结果中找到对应的代码
+                    for result in code_results.get("results", []):
+                        if result.get("name") == name and result.get("code"):
+                            subsystem["code"] = result["code"]
+                            break
+                else:
+                    subsystem["cnlp"] = f"需要通过自然语言处理实现：{name}"
+                
+                subsystems.append(subsystem)
+            
+            # 如果collaboration为空，生成默认的协作关系描述
+            if not collaboration:
+                subsystem_names = [s.get("name", f"子系统{i+1}") for i, s in enumerate(subsystems)]
+                if len(subsystem_names) <= 1:
+                    collaboration = f"单个子系统 {subsystem_names[0] if subsystem_names else '未命名子系统'} 独立处理用户请求"
+                else:
+                    collaboration = f"系统按顺序执行：{' → '.join(subsystem_names)}，每个子系统处理特定的业务逻辑"
+                
+                LogUtils.log_info(f"为子提示词数据生成默认协作关系: {collaboration}")
+            
+            return {
+                "subsystems": subsystems,
+                "collaboration": collaboration
+            }
+            
+        except Exception as e:
+            LogUtils.log_warning(f"转换子提示词格式失败: {e}")
+            return {"subsystems": [], "collaboration": ""}
     
     def step3_convert_to_cnlp(self, subprompts_data: Dict[str, Any], code_generation_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -737,7 +1227,7 @@ class PromptSplitPipeline:
         code_generation_enabled = self.config.get('step2_5_code_generation', {}).get('enabled', True)
         
         if code_generation_enabled:
-            step2_5_result = self.step2_5_generate_code(step2_result.get('subprompts', {}))
+            step2_5_result = self.step2_5_generate_code(step2_result)
             if "error" in step2_5_result:
                 LogUtils.log_warning(f"代码生成失败，但继续执行后续步骤: {step2_5_result['error']}")
                 step2_5_result = {"error": step2_5_result["error"], "results": []}
