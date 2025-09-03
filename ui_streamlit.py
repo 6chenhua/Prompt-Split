@@ -786,7 +786,7 @@ def render_subprompt_result(data: Any):
         for i, prompt in enumerate(subprompts, 1):
             with st.expander(f"子提示词 {i}: {prompt.get('name', f'提示词{i}')}"):
                 if 'prompt' in prompt:
-                    st.text_area("提示词内容", prompt['prompt'], height=150, disabled=True)
+                    st.text_area("提示词内容", prompt['prompt'], height=150, disabled=True, key=f"subprompt_text_{i}")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -869,7 +869,7 @@ def render_code_generation_result(data: Any):
                 
                 # 显示原始提示词（折叠状态）
                 with st.expander("查看原始提示词", expanded=False):
-                    st.text_area("原始提示词", result.get('original_prompt', ''), height=100, disabled=True)
+                    st.text_area("原始提示词", result.get('original_prompt', ''), height=100, disabled=True, key=f"original_prompt_{i}")
     else:
         st.text(f"代码生成结果: {data}")
 

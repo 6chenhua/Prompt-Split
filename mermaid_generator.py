@@ -46,8 +46,9 @@ class MermaidGenerator:
 }
 @Instruction Split prompt and order {
 @InputVariable {
-子系统列表: {subsystems}
-协作关系: {collaboration}
+用户将在对话中提供：
+- 子系统列表：包含每个子系统的名称和实现类型（CODE/CNLP）
+- 协作关系：描述子系统间的交互和流程顺序
 }
 @Commands {
 step1: 分析子系统列表，识别每个子系统的名称和实现方式（代码/CNLP）。
@@ -129,12 +130,12 @@ flowchart TD
             mermaid_prompt = self._load_mermaid_prompt_template()
             
             # 替换模板中的占位符
-            mermaid_prompt = mermaid_prompt.replace("{subsystems}", json.dumps(subsystem_info, ensure_ascii=False))
-            mermaid_prompt = mermaid_prompt.replace("{collaboration}", collaboration)
+            # mermaid_prompt = mermaid_prompt.replace("{subsystems}", json.dumps(subsystem_info, ensure_ascii=False))
+            # mermaid_prompt = mermaid_prompt.replace("{collaboration}", collaboration)
             
             messages = [
                 {"role": "system", "content": mermaid_prompt},
-                {"role": "user", "content": ""}
+                {"role": "user", "content": input_content}
             ]
             
             response = self.llm_client.call(messages)

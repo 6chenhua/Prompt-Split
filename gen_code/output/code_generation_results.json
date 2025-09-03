@@ -1,10 +1,10 @@
 {
   "summary": {
-    "total_count": 4,
+    "total_count": 2,
     "implementable_count": 0,
     "successful_count": 0,
     "failed_count": 0
   },
   "results": [],
-  "mermaid_diagram": "flowchart TD\n    %% 节点定义\n    A(通用对话预处理子系统-CNLP)\n    B(常见QA子系统-CNLP)\n    C(需求收集与确认子系统-CNLP)\n    D(情绪策略子系统-CNLP)\n    \n    %% 连接关系\n    A --> B\n    B --> C\n    C --> D\n    \n    %% 样式定义\n    classDef codeSystem fill:#e1f5fe,stroke:#01579b,stroke-width:2px\n    classDef cnlpSystem fill:#f3e5f5,stroke:#4a148c,stroke-width:2px\n    \n    %% 应用样式\n    class A,B,C,D cnlpSystem"
+  "mermaid_diagram": "flowchart TD\n    %% 节点定义\n    A(追加需求收集与校验子系统-CNLP)\n    B(需求确认收尾子系统-CNLP)\n    \n    %% 连接关系\n    A --> B\n    \n    %% 样式定义\n    classDef cnlpSystem fill:#f3e5f5,stroke:#4a148c,stroke-width:2px\n    \n    %% 应用样式\n    class A,B cnlpSystem"
 }
